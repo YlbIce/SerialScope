@@ -1,14 +1,10 @@
 #include "SerialSession.h"
 
 #include <algorithm>
-#include <iomanip>
 #include <sstream>
 #include <utility>
 
-#include <Windows.h>
-#include <SetupAPI.h>
-#include <devguid.h>
-#include <regstr.h>
+#include <CSerialPort/SerialPortInfo.h>
 
 namespace asio = boost::asio;
 using protocol::Bytes;
@@ -16,58 +12,29 @@ using protocol::Json;
 
 namespace {
 
-std::string narrow(const std::wstring& value) {
-  if (value.empty()) {
-    return {};
-  }
-  const int length = WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
-  std::string result(length, '\0');
-  WideCharToMultiByte(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), result.data(), length, nullptr, nullptr);
-  return result;
-}
-
-std::wstring readDeviceRegistryString(HDEVINFO devices, SP_DEVINFO_DATA& data, DWORD property) {
-  DWORD type = 0;
-  WCHAR buffer[512] = {};
-  if (!SetupDiGetDeviceRegistryPropertyW(devices, &data, property, &type, reinterpret_cast<PBYTE>(buffer), sizeof(buffer), nullptr)) {
-    return {};
-  }
-  return buffer;
-}
-
-std::string readPortName(HDEVINFO devices, SP_DEVINFO_DATA& data) {
-  HKEY key = SetupDiOpenDevRegKey(devices, &data, DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_READ);
-  if (key == INVALID_HANDLE_VALUE) {
-    return {};
-  }
-
-  WCHAR buffer[256] = {};
-  DWORD size = sizeof(buffer);
-  DWORD type = 0;
-  const LONG rc = RegQueryValueExW(key, L"PortName", nullptr, &type, reinterpret_cast<LPBYTE>(buffer), &size);
-  RegCloseKey(key);
-  if (rc != ERROR_SUCCESS || type != REG_SZ) {
-    return {};
-  }
-  return narrow(buffer);
-}
-
-std::string systemLocationFor(const std::string& portName) {
+std::string portSystemLocation(const std::string& portName) {
   if (portName.rfind("COM", 0) == 0 && portName.size() > 4) {
     return "\\\\.\\" + portName;
   }
   return portName;
 }
 
-std::string boostErrorMessage(const boost::system::error_code& ec) {
-  return ec.message();
+std::string cString(const char* value) {
+  return value == nullptr ? std::string() : std::string(value);
+}
+
+std::pair<std::string, std::string> parseHardwareId(const std::string& hardwareId) {
+  const auto separator = hardwareId.find(':');
+  if (separator == std::string::npos) {
+    return {"", ""};
+  }
+  return {hardwareId.substr(0, separator), hardwareId.substr(separator + 1)};
 }
 
 } // namespace
 
 SerialSession::SerialSession(asio::io_context& io)
-  : io_(io),
-    port_(io) {
+  : io_(io) {
 }
 
 void SerialSession::setEventHandler(EventHandler handler) {
@@ -79,8 +46,9 @@ Json SerialSession::stateJson() const {
     std::chrono::steady_clock::now() - startTime_
   ).count();
 
+  std::scoped_lock lock(portMutex_);
   return {
-    {"isOpen", port_.is_open()},
+    {"isOpen", port_.isOpen()},
     {"portName", portName_},
     {"lastPortName", lastPortName_},
     {"baudRate", baudRate_},
@@ -100,30 +68,41 @@ Json SerialSession::open(const Json& config) {
     return {{"ok", false}, {"message", "未选择串口"}};
   }
 
-  const std::string parity = config.value("parity", "none");
-  if (parity == "mark" || parity == "space") {
-    return {{"ok", false}, {"message", "当前非 Qt 后端基于 Boost.Asio，暂不支持 Mark/Space 校验位"}};
-  }
-
-  boost::system::error_code ec;
-  port_.open(systemLocationFor(portName), ec);
-  if (ec) {
-    const std::string message = "打开串口失败：" + boostErrorMessage(ec);
-    emitState(message);
-    return {{"ok", false}, {"message", message}};
-  }
-
   baudRate_ = config.value("baudRate", 115200);
-  port_.set_option(asio::serial_port_base::baud_rate(baudRate_), ec);
-  if (!ec) port_.set_option(parseDataBits(config.value("dataBits", 8)), ec);
-  if (!ec) port_.set_option(parseParity(parity), ec);
-  if (!ec) port_.set_option(parseStopBits(config.value("stopBits", "1")), ec);
-  if (!ec) port_.set_option(parseFlowControl(config.value("flowControl", "none")), ec);
 
-  if (ec) {
-    const std::string message = "配置串口失败：" + boostErrorMessage(ec);
-    close();
-    return {{"ok", false}, {"message", message}};
+  std::string errorMessage;
+  {
+    std::scoped_lock lock(portMutex_);
+    // CSerialPort 负责平台串口细节；这里保持协议配置到库配置的简单映射。
+    port_.init(
+      portName.c_str(),
+      baudRate_,
+      parseParity(config.value("parity", "none")),
+      parseDataBits(config.value("dataBits", 8)),
+      parseStopBits(config.value("stopBits", "1")),
+      parseFlowControl(config.value("flowControl", "none")),
+      static_cast<unsigned int>(readBuffer_.size())
+    );
+    port_.setOperateMode(itas109::AsynchronousOperate);
+    port_.setReadIntervalTimeout(1);
+    port_.setMinByteReadNotify(1);
+
+    if (!port_.open()) {
+      errorMessage = "打开串口失败：" + lastErrorMessage();
+    }
+
+    if (errorMessage.empty()) {
+      const int eventStatus = port_.connectReadEvent(this);
+      if (eventStatus != itas109::ErrorOK) {
+        errorMessage = "注册串口读取事件失败，错误码：" + std::to_string(eventStatus);
+        port_.close();
+      }
+    }
+  }
+
+  if (!errorMessage.empty()) {
+    emitState(errorMessage);
+    return {{"ok", false}, {"message", errorMessage}};
   }
 
   // 串口配置成功后再重置统计，避免打开失败时破坏前端已有状态。
@@ -134,16 +113,17 @@ Json SerialSession::open(const Json& config) {
   rxFrames_ = 0;
   txFrames_ = 0;
   startTime_ = std::chrono::steady_clock::now();
-  startRead();
   emitState("串口已打开");
   return {{"ok", true}, {"message", "串口已打开"}, {"state", stateJson()}};
 }
 
 Json SerialSession::close() {
-  boost::system::error_code ignored;
-  if (port_.is_open()) {
-    port_.cancel(ignored);
-    port_.close(ignored);
+  {
+    std::scoped_lock lock(portMutex_);
+    if (port_.isOpen()) {
+      port_.disconnectReadEvent();
+      port_.close();
+    }
   }
   portName_.clear();
   emitState("串口已关闭");
@@ -151,8 +131,11 @@ Json SerialSession::close() {
 }
 
 Json SerialSession::sendPayload(const Json& payload) {
-  if (!port_.is_open()) {
-    return {{"ok", false}, {"message", "串口未打开"}};
+  {
+    std::scoped_lock lock(portMutex_);
+    if (!port_.isOpen()) {
+      return {{"ok", false}, {"message", "串口未打开"}};
+    }
   }
 
   Bytes bytes;
@@ -174,66 +157,84 @@ Json SerialSession::sendPayload(const Json& payload) {
     return {{"ok", false}, {"message", "发送内容为空"}};
   }
 
-  boost::system::error_code ec;
-  const std::size_t written = asio::write(port_, asio::buffer(bytes), ec);
-  if (ec) {
-    return {{"ok", false}, {"message", "写入失败：" + boostErrorMessage(ec)}};
+  int written = -1;
+  {
+    std::scoped_lock lock(portMutex_);
+    written = port_.writeData(bytes.data(), static_cast<int>(bytes.size()));
+  }
+
+  if (written < 0) {
+    return {{"ok", false}, {"message", "写入失败：" + lastErrorMessage()}};
   }
 
   Bytes sent(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(written));
-  txBytes_ += written;
+  txBytes_ += static_cast<std::uint64_t>(written);
   txFrames_ += 1;
   emitTransferEvent("tx", sent);
   emitState();
   return {{"ok", true}, {"bytes", written}, {"state", stateJson()}};
 }
 
-asio::serial_port_base::character_size SerialSession::parseDataBits(int value) {
-  return asio::serial_port_base::character_size(static_cast<unsigned int>(std::clamp(value, 5, 8)));
+itas109::DataBits SerialSession::parseDataBits(int value) {
+  switch (std::clamp(value, 5, 8)) {
+    case 5: return itas109::DataBits5;
+    case 6: return itas109::DataBits6;
+    case 7: return itas109::DataBits7;
+    default: return itas109::DataBits8;
+  }
 }
 
-asio::serial_port_base::parity SerialSession::parseParity(const std::string& value) {
-  if (value == "even") return asio::serial_port_base::parity(asio::serial_port_base::parity::even);
-  if (value == "odd") return asio::serial_port_base::parity(asio::serial_port_base::parity::odd);
-  return asio::serial_port_base::parity(asio::serial_port_base::parity::none);
+itas109::Parity SerialSession::parseParity(const std::string& value) {
+  if (value == "even") return itas109::ParityEven;
+  if (value == "odd") return itas109::ParityOdd;
+  if (value == "mark") return itas109::ParityMark;
+  if (value == "space") return itas109::ParitySpace;
+  return itas109::ParityNone;
 }
 
-asio::serial_port_base::stop_bits SerialSession::parseStopBits(const std::string& value) {
-  if (value == "1.5") return asio::serial_port_base::stop_bits(asio::serial_port_base::stop_bits::onepointfive);
-  if (value == "2") return asio::serial_port_base::stop_bits(asio::serial_port_base::stop_bits::two);
-  return asio::serial_port_base::stop_bits(asio::serial_port_base::stop_bits::one);
+itas109::StopBits SerialSession::parseStopBits(const std::string& value) {
+  if (value == "1.5") return itas109::StopOneAndHalf;
+  if (value == "2") return itas109::StopTwo;
+  return itas109::StopOne;
 }
 
-asio::serial_port_base::flow_control SerialSession::parseFlowControl(const std::string& value) {
-  if (value == "hardware") return asio::serial_port_base::flow_control(asio::serial_port_base::flow_control::hardware);
-  if (value == "software") return asio::serial_port_base::flow_control(asio::serial_port_base::flow_control::software);
-  return asio::serial_port_base::flow_control(asio::serial_port_base::flow_control::none);
+itas109::FlowControl SerialSession::parseFlowControl(const std::string& value) {
+  if (value == "hardware") return itas109::FlowHardware;
+  if (value == "software") return itas109::FlowSoftware;
+  return itas109::FlowNone;
 }
 
-void SerialSession::startRead() {
-  if (!port_.is_open()) {
+void SerialSession::onReadEvent(const char*, unsigned int readBufferLen) {
+  if (readBufferLen == 0) {
     return;
   }
 
-  auto self = shared_from_this();
-  port_.async_read_some(asio::buffer(readBuffer_), [this, self](const boost::system::error_code& ec, std::size_t size) {
-    if (ec) {
-      if (ec != asio::error::operation_aborted && eventHandler_) {
-        eventHandler_({
-          {"type", "serial:error"},
-          {"payload", {{"message", "读取失败：" + boostErrorMessage(ec)}, {"code", ec.value()}}}
-        });
-      }
+  Bytes bytes(std::min<std::size_t>(readBufferLen, readBuffer_.size()));
+  int read = -1;
+  {
+    std::scoped_lock lock(portMutex_);
+    if (!port_.isOpen()) {
       return;
     }
+    read = port_.readData(bytes.data(), static_cast<int>(bytes.size()));
+  }
 
-    Bytes bytes(readBuffer_.begin(), readBuffer_.begin() + static_cast<std::ptrdiff_t>(size));
-    rxBytes_ += bytes.size();
-    rxFrames_ += 1;
-    emitTransferEvent("rx", bytes);
-    emitState();
-    startRead();
+  if (read <= 0) {
+    return;
+  }
+
+  bytes.resize(static_cast<std::size_t>(read));
+  // CSerialPort 的读取通知来自库内部线程；转回 Asio 主线程再更新状态并广播。
+  asio::post(io_, [self = shared_from_this(), bytes = std::move(bytes)]() mutable {
+    self->handleReceived(std::move(bytes));
   });
+}
+
+void SerialSession::handleReceived(Bytes bytes) {
+  rxBytes_ += bytes.size();
+  rxFrames_ += 1;
+  emitTransferEvent("rx", bytes);
+  emitState();
 }
 
 void SerialSession::emitState(const std::string& message) {
@@ -242,7 +243,7 @@ void SerialSession::emitState(const std::string& message) {
   }
   Json payload = stateJson();
   if (!message.empty()) {
-    payload["message"] = message;
+    payload["message"] = protocol::sanitizeUtf8(message);
   }
   eventHandler_({{"type", "serial:state"}, {"payload", payload}});
 }
@@ -263,39 +264,34 @@ void SerialSession::emitTransferEvent(const std::string& direction, const Bytes&
   });
 }
 
+std::string SerialSession::lastErrorMessage() const {
+  const char* raw = port_.getLastErrorMsg();
+  if (raw == nullptr || raw[0] == '\0') {
+    return "未知错误，错误码：" + std::to_string(port_.getLastError());
+  }
+  return protocol::nativeToUtf8(raw);
+}
+
 Json listSerialPorts() {
   Json ports = Json::array();
+  const auto infos = itas109::CSerialPortInfo::availablePortInfos();
 
-  HDEVINFO devices = SetupDiGetClassDevsW(&GUID_DEVCLASS_PORTS, nullptr, nullptr, DIGCF_PRESENT);
-  if (devices == INVALID_HANDLE_VALUE) {
-    return {{"ports", ports}};
-  }
+  for (const auto& info : infos) {
+    const std::string portName = protocol::nativeToUtf8(cString(info.portName));
+    const std::string description = protocol::nativeToUtf8(cString(info.description));
+    const std::string hardwareId = protocol::nativeToUtf8(cString(info.hardwareId));
+    const auto [vendorId, productId] = parseHardwareId(hardwareId);
 
-  for (DWORD index = 0;; ++index) {
-    SP_DEVINFO_DATA data {};
-    data.cbSize = sizeof(data);
-    if (!SetupDiEnumDeviceInfo(devices, index, &data)) {
-      break;
-    }
-
-    const std::string portName = readPortName(devices, data);
-    if (portName.empty()) {
-      continue;
-    }
-
-    const std::string description = narrow(readDeviceRegistryString(devices, data, SPDRP_FRIENDLYNAME));
-    const std::string manufacturer = narrow(readDeviceRegistryString(devices, data, SPDRP_MFG));
     ports.push_back({
       {"portName", portName},
-      {"systemLocation", systemLocationFor(portName)},
+      {"systemLocation", portSystemLocation(portName)},
       {"description", description},
-      {"manufacturer", manufacturer},
+      {"manufacturer", ""},
       {"serialNumber", ""},
-      {"vendorId", ""},
-      {"productId", ""}
+      {"vendorId", vendorId},
+      {"productId", productId}
     });
   }
 
-  SetupDiDestroyDeviceInfoList(devices);
   return {{"ports", ports}};
 }

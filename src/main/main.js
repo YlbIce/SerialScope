@@ -22,12 +22,12 @@ function startBackend() {
   if (!fs.existsSync(exe)) {
     return {
       started: false,
-      message: `未找到 Boost 后端：${exe}`
+      message: `未找到 Native C++ 后端：${exe}`
     };
   }
 
   if (backendProcess) {
-    return { started: true, message: 'Boost 后端已运行' };
+    return { started: true, message: 'Native C++ 后端已运行' };
   }
 
   backendProcess = spawn(exe, ['--port', String(WS_PORT)], {
@@ -48,11 +48,11 @@ function startBackend() {
     backendProcess = null;
     mainWindow?.webContents.send('backend:exit', code);
     if (!isQuitting) {
-      mainWindow?.webContents.send('backend:log', `Boost 后端已退出，代码 ${code ?? 'unknown'}`);
+      mainWindow?.webContents.send('backend:log', `Native C++ 后端已退出，代码 ${code ?? 'unknown'}`);
     }
   });
 
-  return { started: true, message: `Boost 后端已启动：${exe}` };
+  return { started: true, message: `Native C++ 后端已启动：${exe}` };
 }
 
 function stopBackend() {
@@ -70,7 +70,7 @@ function createWindow() {
     minWidth: 1180,
     minHeight: 780,
     backgroundColor: '#101215',
-    title: 'SerialScope Boost',
+    title: 'SerialScope Native',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

@@ -17,6 +17,8 @@ Bytes textToBytes(const std::string& text, const std::string& lineEnding);
 std::uint16_t crc16Modbus(const Bytes& data);
 void appendModbusCrc(Bytes& data);
 std::string bytesToDisplayText(const Bytes& data);
+std::string nativeToUtf8(const std::string& value);
+std::string sanitizeUtf8(const std::string& value);
 std::string utcTimestamp();
 
 Json makeError(const std::string& requestId, const std::string& message);

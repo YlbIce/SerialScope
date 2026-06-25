@@ -4,7 +4,7 @@ if (POLICY CMP0167)
   cmake_policy(SET CMP0167 OLD)
 endif()
 
-project(serialscope_boost_backend LANGUAGES CXX)
+project(serialscope_native_backend LANGUAGES CXX)
 
 if (DEFINED CMAKE_TOOLCHAIN_FILE)
   message(STATUS "Using toolchain: ${CMAKE_TOOLCHAIN_FILE}")
@@ -20,6 +20,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 find_package(Boost REQUIRED COMPONENTS beast system)
+find_package(cserialport CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
 add_executable(serialscope-backend
@@ -35,7 +36,10 @@ target_compile_definitions(serialscope-backend PRIVATE
   _WIN32_WINNT=0x0A00
 )
 
-target_include_directories(serialscope-backend PRIVATE src)
+target_include_directories(serialscope-backend PRIVATE
+  src
+  ${CSerialPort_INCLUDE_DIR}
+)
 
 if (MSVC)
   target_compile_options(serialscope-backend PRIVATE /utf-8 /permissive-)
@@ -44,6 +48,7 @@ endif()
 target_link_libraries(serialscope-backend PRIVATE
   Boost::beast
   Boost::system
+  ${CSerialPort_LIBRARY}
   nlohmann_json::nlohmann_json
   setupapi
   ws2_32

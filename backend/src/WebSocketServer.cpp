@@ -12,7 +12,7 @@ using protocol::Json;
 namespace {
 
 std::string dumpJson(const Json& message) {
-  return message.dump();
+  return message.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
 }
 
 std::string requestIdOf(const Json& command) {
@@ -140,7 +140,7 @@ void WebSocketSession::start() {
   auto self = shared_from_this();
   ws_.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
   ws_.set_option(websocket::stream_base::decorator([](websocket::response_type& response) {
-    response.set(beast::http::field::server, "SerialScope Boost Backend");
+    response.set(beast::http::field::server, "SerialScope Native Backend");
   }));
 
   ws_.async_accept([this, self](boost::system::error_code ec) {
@@ -154,8 +154,8 @@ void WebSocketSession::start() {
     send(dumpJson({
       {"type", "backend:hello"},
       {"payload", {
-        {"name", "SerialScope Boost Backend"},
-        {"version", "0.1.0"},
+        {"name", "SerialScope Native Backend"},
+        {"version", "0.2.0"},
         {"wsPort", port_}
       }}
     }));

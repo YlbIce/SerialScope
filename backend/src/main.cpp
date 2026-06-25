@@ -30,7 +30,7 @@ unsigned short readPort(int argc, char* argv[]) {
 
 int main(int argc, char* argv[]) {
   if (hasArg(argc, argv, "--version") || hasArg(argc, argv, "-v")) {
-    std::cout << "SerialScope Boost Backend 0.1.0\n";
+    std::cout << "SerialScope Native Backend 0.2.0\n";
     return 0;
   }
 
@@ -53,7 +53,7 @@ int main(int argc, char* argv[]) {
       return 2;
     }
 
-    std::cout << "SerialScope Boost backend listening on ws://127.0.0.1:" << port << "\n";
+    std::cout << "SerialScope Native backend listening on ws://127.0.0.1:" << port << "\n";
     io.run();
     return 0;
   } catch (const std::exception& error) {

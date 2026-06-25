@@ -6,11 +6,14 @@
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 
 #include <boost/asio.hpp>
+#include <CSerialPort/SerialPort.h>
+#include <CSerialPort/SerialPortListener.h>
 
-class SerialSession final : public std::enable_shared_from_this<SerialSession> {
+class SerialSession final : public std::enable_shared_from_this<SerialSession>, private itas109::CSerialPortListener {
 public:
   using EventHandler = std::function<void(protocol::Json)>;
 
@@ -23,17 +26,20 @@ public:
   protocol::Json sendPayload(const protocol::Json& payload);
 
 private:
-  static boost::asio::serial_port_base::character_size parseDataBits(int value);
-  static boost::asio::serial_port_base::parity parseParity(const std::string& value);
-  static boost::asio::serial_port_base::stop_bits parseStopBits(const std::string& value);
-  static boost::asio::serial_port_base::flow_control parseFlowControl(const std::string& value);
+  static itas109::DataBits parseDataBits(int value);
+  static itas109::Parity parseParity(const std::string& value);
+  static itas109::StopBits parseStopBits(const std::string& value);
+  static itas109::FlowControl parseFlowControl(const std::string& value);
 
-  void startRead();
+  void onReadEvent(const char* portName, unsigned int readBufferLen) override;
+  void handleReceived(protocol::Bytes bytes);
   void emitState(const std::string& message = {});
   void emitTransferEvent(const std::string& direction, const protocol::Bytes& bytes);
+  std::string lastErrorMessage() const;
 
   boost::asio::io_context& io_;
-  boost::asio::serial_port port_;
+  mutable itas109::CSerialPort port_;
+  mutable std::mutex portMutex_;
   EventHandler eventHandler_;
   std::array<std::uint8_t, 4096> readBuffer_ {};
   std::string portName_;

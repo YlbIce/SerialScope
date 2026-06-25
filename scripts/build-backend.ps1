@@ -89,4 +89,10 @@ if (-not $Exe) {
 }
 
 Copy-Item $Exe (Join-Path $Bin $ExeName) -Force
+
+$exeDir = Split-Path $Exe
+Get-ChildItem -Path $exeDir -Filter "*.dll" -ErrorAction SilentlyContinue | ForEach-Object {
+    Copy-Item $_.FullName (Join-Path $Bin $_.Name) -Force
+}
+
 Write-Host "后端构建完成：$(Join-Path $Bin $ExeName)"

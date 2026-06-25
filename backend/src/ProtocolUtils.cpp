@@ -5,7 +5,34 @@
 #include <iomanip>
 #include <sstream>
 
+#ifdef _WIN32
+#include <Windows.h>
+#endif
+
 namespace protocol {
+
+namespace {
+
+std::string wideToUtf8(const wchar_t* data, int length) {
+  if (data == nullptr || length <= 0) {
+    return {};
+  }
+  const int bytes = WideCharToMultiByte(CP_UTF8, 0, data, length, nullptr, 0, nullptr, nullptr);
+  if (bytes <= 0) {
+    return {};
+  }
+  std::string result(static_cast<std::size_t>(bytes), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, data, length, result.data(), bytes, nullptr, nullptr);
+  return result;
+}
+
+std::string escapeByte(std::uint8_t byte) {
+  char buffer[5] = {};
+  std::snprintf(buffer, sizeof(buffer), "\\x%02X", byte);
+  return buffer;
+}
+
+} // namespace
 
 std::string bytesToHex(const Bytes& data) {
   std::ostringstream stream;
@@ -98,7 +125,6 @@ void appendModbusCrc(Bytes& data) {
 std::string bytesToDisplayText(const Bytes& data) {
   std::string result;
   result.reserve(data.size());
-  char buffer[8] = {};
   for (const auto byte : data) {
     if (byte == '\r') {
       result += "\\r";
@@ -106,13 +132,96 @@ std::string bytesToDisplayText(const Bytes& data) {
       result += "\\n";
     } else if (byte == '\t') {
       result += "\\t";
-    } else if (byte < 0x20 || byte == 0x7F) {
-      std::snprintf(buffer, sizeof(buffer), "\\x%02X", byte);
-      result += buffer;
-    } else {
+    } else if (byte >= 0x20 && byte <= 0x7E) {
       result.push_back(static_cast<char>(byte));
+    } else {
+      result += escapeByte(byte);
     }
   }
+  return result;
+}
+
+std::string nativeToUtf8(const std::string& value) {
+  if (value.empty()) {
+    return {};
+  }
+
+#ifdef _WIN32
+  const int wideChars = MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), nullptr, 0);
+  if (wideChars > 0) {
+    std::wstring wide(static_cast<std::size_t>(wideChars), L'\0');
+    MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()), wide.data(), wideChars);
+    return wideToUtf8(wide.data(), wideChars);
+  }
+#endif
+
+  return sanitizeUtf8(value);
+}
+
+std::string sanitizeUtf8(const std::string& value) {
+  std::string result;
+  result.reserve(value.size());
+
+  for (std::size_t i = 0; i < value.size();) {
+    const auto byte = static_cast<std::uint8_t>(value[i]);
+    if (byte <= 0x7F) {
+      if (byte >= 0x20 || byte == '\r' || byte == '\n' || byte == '\t') {
+        result.push_back(static_cast<char>(byte));
+      } else {
+        result += escapeByte(byte);
+      }
+      ++i;
+      continue;
+    }
+
+    std::size_t length = 0;
+    std::uint32_t codepoint = 0;
+    if ((byte & 0xE0) == 0xC0) {
+      length = 2;
+      codepoint = byte & 0x1F;
+    } else if ((byte & 0xF0) == 0xE0) {
+      length = 3;
+      codepoint = byte & 0x0F;
+    } else if ((byte & 0xF8) == 0xF0) {
+      length = 4;
+      codepoint = byte & 0x07;
+    } else {
+      result += escapeByte(byte);
+      ++i;
+      continue;
+    }
+
+    if (i + length > value.size()) {
+      result += escapeByte(byte);
+      ++i;
+      continue;
+    }
+
+    bool valid = true;
+    for (std::size_t j = 1; j < length; ++j) {
+      const auto next = static_cast<std::uint8_t>(value[i + j]);
+      if ((next & 0xC0) != 0x80) {
+        valid = false;
+        break;
+      }
+      codepoint = (codepoint << 6) | (next & 0x3F);
+    }
+
+    if (!valid
+        || (length == 2 && codepoint < 0x80)
+        || (length == 3 && codepoint < 0x800)
+        || (length == 4 && codepoint < 0x10000)
+        || codepoint > 0x10FFFF
+        || (codepoint >= 0xD800 && codepoint <= 0xDFFF)) {
+      result += escapeByte(byte);
+      ++i;
+      continue;
+    }
+
+    result.append(value, i, length);
+    i += length;
+  }
+
   return result;
 }
 
