@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src ws://127.0.0.1:47990; img-src 'self' data:"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SerialScope</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="side-panel">
+        <header class="brand">
+          <div class="brand-mark">SS</div>
+          <div>
+            <p>Qt Backend</p>
+            <h1>SerialScope</h1>
+          </div>
+        </header>
+
+        <section class="panel">
+          <div class="panel-title">
+            <span>连接</span>
+            <strong id="backendState">后端连接中</strong>
+          </div>
+          <button id="startBackendButton" class="secondary-button" type="button">启动后端</button>
+          <button id="refreshPortsButton" type="button">刷新串口</button>
+          <label>
+            <span>串口</span>
+            <select id="portSelect"></select>
+          </label>
+          <label>
+            <span>波特率</span>
+            <select id="baudRateSelect">
+              <option>9600</option>
+              <option>19200</option>
+              <option>38400</option>
+              <option>57600</option>
+              <option selected>115200</option>
+              <option>230400</option>
+              <option>460800</option>
+              <option>921600</option>
+            </select>
+          </label>
+          <div class="field-grid">
+            <label>
+              <span>数据位</span>
+              <select id="dataBitsSelect">
+                <option>8</option>
+                <option>7</option>
+                <option>6</option>
+                <option>5</option>
+              </select>
+            </label>
+            <label>
+              <span>停止位</span>
+              <select id="stopBitsSelect">
+                <option value="1">1</option>
+                <option value="1.5">1.5</option>
+                <option value="2">2</option>
+              </select>
+            </label>
+          </div>
+          <label>
+            <span>校验</span>
+            <select id="paritySelect">
+              <option value="none">None</option>
+              <option value="even">Even</option>
+              <option value="odd">Odd</option>
+              <option value="mark">Mark</option>
+              <option value="space">Space</option>
+            </select>
+          </label>
+          <label>
+            <span>流控</span>
+            <select id="flowControlSelect">
+              <option value="none">None</option>
+              <option value="hardware">RTS/CTS</option>
+              <option value="software">XON/XOFF</option>
+            </select>
+          </label>
+          <div class="button-row">
+            <button id="openButton" class="primary-button" type="button">打开</button>
+            <button id="closeButton" type="button">关闭</button>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-title">
+            <span>预设</span>
+            <strong id="profileName">默认调试</strong>
+          </div>
+          <button id="saveProfileButton" type="button">保存当前配置</button>
+          <button id="loadProfileButton" type="button">加载配置</button>
+          <button id="openRuleConfigButton" type="button">配置高亮规则</button>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">串口调试 / 协议分析 / 数据记录</p>
+            <h2>工业级串口调试台</h2>
+          </div>
+          <div class="status-strip">
+            <span id="serialState" class="state-pill offline">串口未打开</span>
+            <span id="rxMetric">RX 0 B</span>
+            <span id="txMetric">TX 0 B</span>
+            <span id="frameMetric">0 frames</span>
+          </div>
+        </header>
+
+        <section class="metrics-grid">
+          <div class="metric-card">
+            <span>接收速率</span>
+            <strong id="rxRate">0 B/s</strong>
+          </div>
+          <div class="metric-card">
+            <span>发送速率</span>
+            <strong id="txRate">0 B/s</strong>
+          </div>
+          <div class="metric-card">
+            <span>最近帧长度</span>
+            <strong id="lastFrameBytes">0 B</strong>
+          </div>
+          <div class="metric-card">
+            <span>规则命中</span>
+            <strong id="ruleHits">0</strong>
+          </div>
+          <canvas id="rateCanvas" width="640" height="120" aria-label="收发速率趋势"></canvas>
+        </section>
+
+        <section class="terminal-layout">
+          <section class="panel terminal-panel">
+            <div class="toolbar">
+              <div class="segmented">
+                <button class="segment active" data-view-mode="mixed" type="button">混合</button>
+                <button class="segment" data-view-mode="text" type="button">文本</button>
+                <button class="segment" data-view-mode="hex" type="button">HEX</button>
+              </div>
+              <input id="filterInput" type="search" placeholder="过滤接收内容 / 正则关键字" />
+              <label class="check-label"><input id="autoScrollCheck" type="checkbox" checked /> 自动滚动</label>
+              <label class="check-label"><input id="pauseReceiveCheck" type="checkbox" /> 暂停显示</label>
+              <button id="clearLogButton" type="button">清空</button>
+              <button id="exportLogButton" type="button">导出</button>
+            </div>
+            <div id="terminalLog" class="terminal-log" aria-label="串口收发日志"></div>
+          </section>
+
+          <aside class="right-stack">
+            <section class="panel">
+              <div class="panel-title">
+                <span>帧分析助手</span>
+                <strong id="frameQuality">等待数据</strong>
+              </div>
+              <dl id="frameInspector" class="inspector"></dl>
+            </section>
+
+            <section class="panel">
+              <div class="panel-title">
+                <span>规则高亮</span>
+                <button id="openRuleConfigInlineButton" class="text-button" type="button">配置</button>
+              </div>
+              <div id="ruleList" class="rule-list"></div>
+            </section>
+          </aside>
+        </section>
+
+        <section class="send-panel panel">
+          <div class="panel-title">
+            <span>发送区</span>
+            <strong id="sendModeLabel">Text</strong>
+          </div>
+          <div class="send-grid">
+            <textarea id="sendInput" spellcheck="false">AT+GMR</textarea>
+            <div class="send-options">
+              <label>
+                <span>模式</span>
+                <select id="sendModeSelect">
+                  <option value="text">Text</option>
+                  <option value="hex">HEX</option>
+                </select>
+              </label>
+              <label>
+                <span>行尾</span>
+                <select id="lineEndingSelect">
+                  <option value="none">None</option>
+                  <option value="CR">CR</option>
+                  <option value="LF">LF</option>
+                  <option value="CRLF" selected>CRLF</option>
+                </select>
+              </label>
+              <label class="check-label"><input id="crcCheck" type="checkbox" /> 追加 Modbus CRC16</label>
+              <label class="check-label"><input id="autoSendCheck" type="checkbox" /> 自动发送</label>
+              <label>
+                <span>周期 ms</span>
+                <input id="autoSendInterval" type="number" min="50" step="50" value="1000" />
+              </label>
+              <button id="sendButton" class="primary-button" type="button">发送</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="macro-panel panel">
+          <div class="panel-title">
+            <span>宏命令</span>
+            <strong>一键发送</strong>
+          </div>
+          <div id="macroGrid" class="macro-grid"></div>
+        </section>
+      </main>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="ruleModal" class="modal-backdrop" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="ruleModalTitle">
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">本地实时匹配</p>
+            <h3 id="ruleModalTitle">规则配置</h3>
+          </div>
+          <button id="closeRuleModalButton" class="icon-button" type="button" aria-label="关闭规则配置">×</button>
+        </header>
+
+        <div class="rule-help">
+          <strong>使用说明</strong>
+          <p>规则会同时匹配日志的文本内容和 HEX 字符串。表达式使用 JavaScript 正则语法，不区分大小写；如果表达式非法，保存时会提示错误。</p>
+          <p>关闭规则后不会继续命中新日志；保存规则会立即重新计算已有日志的命中和高亮。</p>
+          <p>示例：<code>ERROR|FAIL|异常</code> 匹配错误，<code>^\\s*\\{.*\\}\\s*$</code> 匹配 JSON 帧，<code>01 03</code> 可匹配 Modbus 读保持寄存器响应。</p>
+        </div>
+
+        <div id="ruleEditorList" class="rule-editor-list"></div>
+
+        <footer class="modal-actions">
+          <button id="addRuleButton" type="button">新增规则</button>
+          <button id="resetRulesButton" type="button">恢复默认</button>
+          <span class="modal-spacer"></span>
+          <button id="cancelRuleConfigButton" type="button">取消</button>
+          <button id="saveRuleConfigButton" class="primary-button" type="button">保存规则</button>
+        </footer>
+      </section>
+    </div>
+    <script src="./renderer.js"></script>
+  </body>
+</html>
