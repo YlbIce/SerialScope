@@ -20,6 +20,13 @@ const state = {
     lastTxBytes: 0,
     ruleHits: 0,
     rateHistory: []
+  },
+  layout: {
+    activePage: 'page-terminal',
+    leftPanel: 300,
+    rightPanel: 340,
+    bottomPanel: 230,
+    hiddenPanels: []
   }
 };
 
@@ -59,6 +66,7 @@ async function boot() {
   state.wsUrl = info.wsUrl;
   $('#backendState').textContent = '连接中';
   bindEvents();
+  restoreLayout();
   loadSavedRules();
   renderRules();
   renderMacros();
@@ -67,7 +75,7 @@ async function boot() {
   window.serialScope.onBackendLog((message) => addSystemLog(message.trim()));
   window.serialScope.onBackendExit(() => {
     state.connected = false;
-    updateConnectionUi('Qt 后端已退出');
+    updateConnectionUi('Native C++ 后端已退出');
   });
   window.setInterval(updateRateMetrics, 1000);
   requestAnimationFrame(drawRateChart);
@@ -105,7 +113,7 @@ function connectWebSocket() {
 
 function sendCommand(type, payload = {}) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
-    showToast('Qt 后端未连接');
+    showToast('Native C++ 后端未连接');
     return;
   }
   state.ws.send(JSON.stringify({ requestId: requestId(), type, payload }));
@@ -150,6 +158,147 @@ function updateConnectionUi(message) {
   $('#startBackendButton').disabled = state.connected;
 }
 
+function switchPage(pageId) {
+  const page = $(`#${pageId}`);
+  if (!page) {
+    return;
+  }
+
+  state.layout.activePage = pageId;
+  $$('.page').forEach((item) => item.classList.toggle('active', item.id === pageId));
+  $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.pageTarget === pageId));
+  $('#pageTitle').textContent = page.dataset.pageTitle || 'SerialScope';
+  $('#pageEyebrow').textContent = page.dataset.pageEyebrow || '';
+  persistLayout();
+}
+
+function restoreLayout() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('serialscope.layout'));
+    if (saved && typeof saved === 'object') {
+      state.layout = {
+        ...state.layout,
+        ...saved,
+        hiddenPanels: Array.isArray(saved.hiddenPanels) ? saved.hiddenPanels : []
+      };
+    }
+  } catch {
+    state.layout.hiddenPanels = [];
+  }
+
+  applyDockLayout();
+  switchPage(state.layout.activePage || 'page-terminal');
+}
+
+function persistLayout() {
+  localStorage.setItem('serialscope.layout', JSON.stringify(state.layout));
+}
+
+function applyDockLayout() {
+  const dock = $('#terminalDock');
+  if (!dock) {
+    return;
+  }
+
+  dock.style.setProperty('--left-panel', `${state.layout.leftPanel}px`);
+  dock.style.setProperty('--right-panel', `${state.layout.rightPanel}px`);
+  dock.style.setProperty('--bottom-panel', `${state.layout.bottomPanel}px`);
+  for (const panel of ['connection', 'terminal', 'analysis', 'send']) {
+    dock.classList.toggle(`hide-${panel}`, state.layout.hiddenPanels.includes(panel));
+  }
+  renderHiddenPanels();
+}
+
+function hidePanel(panelId) {
+  if (!state.layout.hiddenPanels.includes(panelId)) {
+    state.layout.hiddenPanels.push(panelId);
+  }
+  applyDockLayout();
+  persistLayout();
+}
+
+function showPanel(panelId) {
+  state.layout.hiddenPanels = state.layout.hiddenPanels.filter((item) => item !== panelId);
+  applyDockLayout();
+  persistLayout();
+}
+
+function resetLayout() {
+  state.layout = {
+    activePage: 'page-terminal',
+    leftPanel: 300,
+    rightPanel: 340,
+    bottomPanel: 230,
+    hiddenPanels: []
+  };
+  applyDockLayout();
+  switchPage(state.layout.activePage);
+  persistLayout();
+  showToast('布局已恢复默认');
+}
+
+function renderHiddenPanels() {
+  const container = $('#hiddenPanelList');
+  if (!container) {
+    return;
+  }
+
+  const names = {
+    connection: '连接参数',
+    terminal: '收发监视',
+    analysis: '分析侧栏',
+    send: '发送区'
+  };
+  container.innerHTML = state.layout.hiddenPanels.map((panelId) => `
+    <button class="restore-panel-button" data-show-panel="${panelId}" type="button">显示 ${names[panelId] || panelId}</button>
+  `).join('');
+
+  $$('[data-show-panel]').forEach((button) => {
+    button.addEventListener('click', () => showPanel(button.dataset.showPanel));
+  });
+}
+
+function startSplitterDrag(event) {
+  const splitter = event.currentTarget.dataset.splitter;
+  const dock = $('#terminalDock');
+  if (!splitter || !dock) {
+    return;
+  }
+
+  event.preventDefault();
+  const startX = event.clientX;
+  const startY = event.clientY;
+  const start = { ...state.layout };
+  const rect = dock.getBoundingClientRect();
+  const horizontal = splitter === 'bottom';
+  document.body.classList.add('dragging-splitter');
+  document.body.classList.toggle('dragging-horizontal', horizontal);
+
+  function move(pointerEvent) {
+    if (splitter === 'left') {
+      const next = start.leftPanel + pointerEvent.clientX - startX;
+      state.layout.leftPanel = clamp(next, 220, Math.min(460, rect.width - 620));
+    } else if (splitter === 'right') {
+      const next = start.rightPanel - (pointerEvent.clientX - startX);
+      state.layout.rightPanel = clamp(next, 260, Math.min(520, rect.width - 620));
+    } else if (splitter === 'bottom') {
+      const next = start.bottomPanel - (pointerEvent.clientY - startY);
+      state.layout.bottomPanel = clamp(next, 160, Math.min(360, rect.height - 320));
+    }
+    applyDockLayout();
+  }
+
+  function stop() {
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', stop);
+    document.body.classList.remove('dragging-splitter', 'dragging-horizontal');
+    persistLayout();
+  }
+
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', stop);
+}
+
 function updateSerialState(payload) {
   state.serialOpen = Boolean(payload.isOpen);
   state.metrics.rxBytes = Number(payload.rxBytes || state.metrics.rxBytes);
@@ -163,6 +312,10 @@ function updateSerialState(payload) {
   $('#rxMetric').textContent = `RX ${formatBytes(state.metrics.rxBytes)}`;
   $('#txMetric').textContent = `TX ${formatBytes(state.metrics.txBytes)}`;
   $('#frameMetric').textContent = `${state.metrics.rxFrames + state.metrics.txFrames} frames`;
+  $('#rxFrameSummary').textContent = state.metrics.rxFrames;
+  $('#txFrameSummary').textContent = state.metrics.txFrames;
+  $('#rxByteSummary').textContent = formatBytes(state.metrics.rxBytes);
+  $('#txByteSummary').textContent = formatBytes(state.metrics.txBytes);
 }
 
 function renderPorts() {
@@ -353,13 +506,18 @@ function analyzeModbusFrame(bytes) {
 }
 
 function renderRules() {
-  $('#ruleList').innerHTML = rules.map((rule, index) => `
+  const markup = rules.map((rule, index) => `
     <label class="rule-item">
       <input class="rule-toggle" data-rule-index="${index}" type="checkbox" ${rule.enabled ? 'checked' : ''} />
       <span>${rule.name}</span>
       <strong>${rule.hits}</strong>
     </label>
   `).join('');
+  $('#ruleList').innerHTML = markup;
+  const pageRuleList = $('#ruleListPage');
+  if (pageRuleList) {
+    pageRuleList.innerHTML = markup;
+  }
 
   $$('.rule-toggle').forEach((input) => {
     input.addEventListener('change', () => {
@@ -660,6 +818,10 @@ function updateRateMetrics() {
 
 function drawRateChart() {
   const canvas = $('#rateCanvas');
+  if (!canvas || canvas.offsetParent === null) {
+    requestAnimationFrame(drawRateChart);
+    return;
+  }
   const ctx = canvas.getContext('2d');
   const rect = canvas.getBoundingClientRect();
   const ratio = window.devicePixelRatio || 1;
@@ -697,6 +859,16 @@ function drawSeries(ctx, rect, values, color) {
 }
 
 function bindEvents() {
+  $$('.nav-item').forEach((button) => {
+    button.addEventListener('click', () => switchPage(button.dataset.pageTarget));
+  });
+  $$('.splitter').forEach((splitter) => {
+    splitter.addEventListener('pointerdown', startSplitterDrag);
+  });
+  $$('[data-hide-panel]').forEach((button) => {
+    button.addEventListener('click', () => hidePanel(button.dataset.hidePanel));
+  });
+  $('#resetLayoutButton').addEventListener('click', resetLayout);
   $('#startBackendButton').addEventListener('click', async () => {
     const result = await window.serialScope.startBackend();
     showToast(result.message);
@@ -726,6 +898,7 @@ function bindEvents() {
   $('#pauseReceiveCheck').addEventListener('change', flushPausedLogs);
   $('#openRuleConfigButton').addEventListener('click', openRuleConfig);
   $('#openRuleConfigInlineButton').addEventListener('click', openRuleConfig);
+  $('#openRuleConfigPageButton').addEventListener('click', openRuleConfig);
   $('#closeRuleModalButton').addEventListener('click', closeRuleConfig);
   $('#cancelRuleConfigButton').addEventListener('click', closeRuleConfig);
   $('#addRuleButton').addEventListener('click', addRuleEditorRow);
@@ -880,6 +1053,10 @@ function formatBytes(value) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), Math.max(min, max));
 }
 
 function escapeHtml(value) {
