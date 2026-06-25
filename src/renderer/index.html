@@ -248,8 +248,38 @@
           </div>
         </section>
 
-        <section id="page-trend" class="page" data-page-title="趋势监视" data-page-eyebrow="吞吐趋势 / 统计视图 / 数据观察">
-          <div class="page-grid">
+        <section id="page-trend" class="page" data-page-title="趋势监视" data-page-eyebrow="采集曲线 / 吞吐趋势 / 数据观察">
+          <div class="trend-layout">
+            <section class="dock-panel sample-chart-panel">
+              <header class="dock-header">
+                <span>采集曲线</span>
+                <div class="dock-actions">
+                  <label class="check-label"><input id="samplePauseCheck" type="checkbox" /> 暂停</label>
+                  <button id="clearSamplesButton" type="button">清空</button>
+                  <button id="exportSamplesButton" type="button">导出</button>
+                </div>
+              </header>
+              <canvas id="sampleCanvas" width="900" height="420" aria-label="采集数据曲线"></canvas>
+              <div id="sampleLegend" class="sample-legend"></div>
+            </section>
+
+            <section class="dock-panel sample-rule-panel">
+              <header class="dock-header">
+                <span>采集规则</span>
+                <div class="dock-actions">
+                  <select id="samplePresetSelect" aria-label="采集规则模板">
+                    <option value="regex">文本正则</option>
+                    <option value="json">JSON 字段</option>
+                    <option value="csv">CSV 列</option>
+                    <option value="hex">HEX 偏移</option>
+                    <option value="modbus">Modbus 寄存器</option>
+                  </select>
+                  <button id="addSampleRuleButton" type="button">新增</button>
+                </div>
+              </header>
+              <div id="sampleRuleList" class="sample-rule-list"></div>
+            </section>
+
             <section class="dock-panel trend-panel" data-panel-id="trend" data-panel-name="速率曲线">
               <header class="dock-header">
                 <span>收发速率趋势</span>
@@ -290,6 +320,7 @@
                 <p>规则会同时匹配日志文本和 HEX 字符串。表达式采用 JavaScript 正则语法，不区分大小写。</p>
                 <p>保存规则后会立即重新计算已有日志的命中状态，并同步到串口调试页面的高亮列表。</p>
                 <p><code>ERROR|FAIL|异常</code> 可匹配错误，<code>01 03</code> 可匹配 Modbus 读保持寄存器响应。</p>
+                <p>采集曲线规则位于“趋势监视”页面。不同规约用不同提取方式：文本协议用正则，JSON 协议用路径，表格文本用 CSV 列，二进制协议用 HEX 偏移，Modbus RTU 用寄存器偏移。</p>
               </div>
             </section>
           </div>

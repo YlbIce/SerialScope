@@ -19,7 +19,8 @@ const state = {
     lastRxBytes: 0,
     lastTxBytes: 0,
     ruleHits: 0,
-    rateHistory: []
+    rateHistory: [],
+    samples: []
   },
   layout: {
     activePage: 'page-terminal',
@@ -39,6 +40,77 @@ const defaultRules = [
 
 let rules = cloneRules(defaultRules);
 let ruleDrafts = [];
+
+const sampleColors = ['#39c98f', '#4dbbd7', '#e5b84d', '#ee6a5f', '#9d8cff', '#f28cc6'];
+const defaultSampleRules = [
+  {
+    id: 'sample-regex-speed',
+    enabled: true,
+    name: '文本速度',
+    type: 'regex',
+    expression: 'speed\\s*[:=]\\s*(-?\\d+(?:\\.\\d+)?)',
+    group: 1,
+    scale: 1,
+    offset: 0,
+    color: sampleColors[0],
+    hits: 0,
+    lastValue: null
+  },
+  {
+    id: 'sample-json-speed',
+    enabled: true,
+    name: 'JSON speed',
+    type: 'json',
+    expression: '$.speed',
+    group: 1,
+    scale: 1,
+    offset: 0,
+    color: sampleColors[1],
+    hits: 0,
+    lastValue: null
+  },
+  {
+    id: 'sample-csv-col0',
+    enabled: false,
+    name: 'CSV 第 1 列',
+    type: 'csv',
+    expression: '0',
+    group: 1,
+    scale: 1,
+    offset: 0,
+    color: sampleColors[2],
+    hits: 0,
+    lastValue: null
+  },
+  {
+    id: 'sample-hex-u16',
+    enabled: false,
+    name: 'HEX U16[0]',
+    type: 'hex',
+    expression: '0:u16be',
+    group: 1,
+    scale: 1,
+    offset: 0,
+    color: sampleColors[3],
+    hits: 0,
+    lastValue: null
+  },
+  {
+    id: 'sample-modbus-r0',
+    enabled: false,
+    name: 'Modbus 寄存器0',
+    type: 'modbus',
+    expression: '0:u16be',
+    group: 1,
+    scale: 1,
+    offset: 0,
+    color: sampleColors[4],
+    hits: 0,
+    lastValue: null
+  }
+];
+
+let sampleRules = cloneSampleRules(defaultSampleRules);
 
 const defaultMacros = [
   { name: 'AT', mode: 'text', data: 'AT', lineEnding: 'CRLF' },
@@ -68,7 +140,9 @@ async function boot() {
   bindEvents();
   restoreLayout();
   loadSavedRules();
+  loadSampleRules();
   renderRules();
+  renderSampleRules();
   renderMacros();
   restoreProfile();
   connectWebSocket();
@@ -79,6 +153,7 @@ async function boot() {
   });
   window.setInterval(updateRateMetrics, 1000);
   requestAnimationFrame(drawRateChart);
+  requestAnimationFrame(drawSampleChart);
 }
 
 function connectWebSocket() {
@@ -382,6 +457,9 @@ function addTransferLog(payload) {
   state.metrics.lastRxBytes = row.direction === 'rx' ? row.bytes : state.metrics.lastRxBytes;
   state.metrics.lastTxBytes = row.direction === 'tx' ? row.bytes : state.metrics.lastTxBytes;
   $('#lastFrameBytes').textContent = `${row.bytes} B`;
+  if (row.direction === 'rx' && !$('#samplePauseCheck').checked) {
+    extractSamples(row);
+  }
   updateInspector(row);
   renderLog();
 }
@@ -503,6 +581,140 @@ function analyzeModbusFrame(bytes) {
     expected: wordHex(expectedValue),
     actual: wordHex(actualValue)
   };
+}
+
+function extractSamples(row) {
+  const bytes = parseHexBytes(row.hex);
+  let changed = false;
+  for (const rule of sampleRules) {
+    if (!rule.enabled) {
+      continue;
+    }
+    const rawValue = extractSampleValue(rule, row, bytes);
+    if (!Number.isFinite(rawValue)) {
+      continue;
+    }
+    const value = rawValue * Number(rule.scale || 1) + Number(rule.offset || 0);
+    rule.hits += 1;
+    rule.lastValue = value;
+    state.metrics.samples.push({
+      t: Date.now(),
+      ruleId: rule.id,
+      name: rule.name,
+      value,
+      color: rule.color
+    });
+    changed = true;
+  }
+
+  if (changed) {
+    state.metrics.samples = state.metrics.samples.slice(-1200);
+    renderSampleRules();
+    renderSampleLegend();
+  }
+}
+
+function extractSampleValue(rule, row, bytes) {
+  try {
+    if (rule.type === 'regex') {
+      const regex = new RegExp(rule.expression, 'i');
+      const match = regex.exec(row.text) || regex.exec(row.hex);
+      return match ? Number(match[Number(rule.group || 1)] ?? match[0]) : NaN;
+    }
+    if (rule.type === 'json') {
+      const parsed = JSON.parse(String(row.text || '').trim());
+      return Number(readJsonPath(parsed, rule.expression));
+    }
+    if (rule.type === 'csv') {
+      const parts = String(row.text || '').trim().split(/[,\t;]/);
+      return Number(parts[Number(rule.expression || 0)]);
+    }
+    if (rule.type === 'hex') {
+      return readNumericBytes(bytes, rule.expression);
+    }
+    if (rule.type === 'modbus') {
+      const modbus = decodeModbusPayload(bytes);
+      return modbus ? readNumericBytes(modbus, rule.expression) : NaN;
+    }
+  } catch {
+    return NaN;
+  }
+  return NaN;
+}
+
+function readJsonPath(value, path) {
+  const normalized = String(path || '').replace(/^\$\.?/, '');
+  if (!normalized) {
+    return value;
+  }
+  return normalized.split('.').reduce((current, key) => {
+    if (current == null) {
+      return undefined;
+    }
+    const arrayMatch = /^([^\[]+)\[(\d+)\]$/.exec(key);
+    if (arrayMatch) {
+      return current[arrayMatch[1]]?.[Number(arrayMatch[2])];
+    }
+    return current[key];
+  }, value);
+}
+
+function readNumericBytes(bytes, expression) {
+  const [offsetText, typeText = 'u16be'] = String(expression || '0:u16be').split(':');
+  const offset = Number(offsetText || 0);
+  if (!Number.isInteger(offset) || offset < 0 || offset >= bytes.length) {
+    return NaN;
+  }
+  const type = typeText.toLowerCase();
+  const read = (index) => bytes[index] ?? 0;
+  if (type === 'u8') return read(offset);
+  if (type === 'i8') return read(offset) > 127 ? read(offset) - 256 : read(offset);
+  if (offset + 1 >= bytes.length) return NaN;
+  if (type === 'u16le') return read(offset) | (read(offset + 1) << 8);
+  if (type === 'i16le') return signed16(read(offset) | (read(offset + 1) << 8));
+  if (type === 'i16be') return signed16((read(offset) << 8) | read(offset + 1));
+  if (type === 'u16be') return (read(offset) << 8) | read(offset + 1);
+  if (offset + 3 >= bytes.length) return NaN;
+  if (type === 'u32le') return (read(offset) | (read(offset + 1) << 8) | (read(offset + 2) << 16) | (read(offset + 3) << 24)) >>> 0;
+  if (type === 'u32be') return (((read(offset) << 24) | (read(offset + 1) << 16) | (read(offset + 2) << 8) | read(offset + 3)) >>> 0);
+  if (type === 'floatle' || type === 'floatbe') {
+    const buffer = new ArrayBuffer(4);
+    const view = new DataView(buffer);
+    const source = type === 'floatle'
+      ? [read(offset), read(offset + 1), read(offset + 2), read(offset + 3)]
+      : [read(offset + 3), read(offset + 2), read(offset + 1), read(offset)];
+    source.forEach((byte, index) => view.setUint8(index, byte));
+    return view.getFloat32(0, true);
+  }
+  return NaN;
+}
+
+function decodeModbusPayload(bytes) {
+  if (bytes.length < 5) {
+    return null;
+  }
+  const functionCode = bytes[1];
+  if ((functionCode === 3 || functionCode === 4) && bytes.length >= 5) {
+    const count = bytes[2];
+    return bytes.slice(3, 3 + count);
+  }
+  if (functionCode === 6 && bytes.length >= 6) {
+    return bytes.slice(4, 6);
+  }
+  return null;
+}
+
+function signed16(value) {
+  return value > 0x7FFF ? value - 0x10000 : value;
+}
+
+function parseHexBytes(hex) {
+  return String(hex || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((item) => Number.parseInt(item, 16))
+    .filter((item) => Number.isFinite(item));
 }
 
 function renderRules() {
@@ -675,6 +887,193 @@ function ruleToProfile(rule) {
   };
 }
 
+function loadSampleRules() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('serialscope.sampleRules'));
+    if (Array.isArray(saved) && saved.length > 0) {
+      sampleRules = normalizeSampleRules(saved);
+      return;
+    }
+  } catch {
+    // 使用默认规则。
+  }
+  sampleRules = cloneSampleRules(defaultSampleRules);
+}
+
+function persistSampleRules() {
+  localStorage.setItem('serialscope.sampleRules', JSON.stringify(sampleRules.map(sampleRuleToProfile)));
+}
+
+function renderSampleRules() {
+  const container = $('#sampleRuleList');
+  if (!container) {
+    return;
+  }
+
+  container.innerHTML = sampleRules.map((rule, index) => `
+    <section class="sample-rule-card ${rule.enabled ? '' : 'disabled'}" data-sample-index="${index}">
+      <div class="sample-rule-head">
+        <label class="check-label">
+          <input class="sample-rule-enabled" type="checkbox" ${rule.enabled ? 'checked' : ''} />
+          启用
+        </label>
+        <input class="sample-rule-name" type="text" value="${escapeAttribute(rule.name)}" aria-label="通道名称" />
+        <select class="sample-rule-type" aria-label="规则类型">
+          ${sampleRuleTypeOptions(rule.type)}
+        </select>
+        <button class="danger-button sample-rule-delete" type="button">删除</button>
+      </div>
+      <div class="sample-rule-fields">
+        <label class="full">
+          <span>${sampleExpressionLabel(rule.type)}</span>
+          <input class="sample-rule-expression" type="text" value="${escapeAttribute(rule.expression)}" />
+        </label>
+        <label>
+          <span>捕获组 / 保留</span>
+          <input class="sample-rule-group" type="number" min="0" step="1" value="${Number(rule.group || 1)}" />
+        </label>
+        <label>
+          <span>比例 scale</span>
+          <input class="sample-rule-scale" type="number" step="0.0001" value="${Number(rule.scale || 1)}" />
+        </label>
+        <label>
+          <span>偏移 offset</span>
+          <input class="sample-rule-offset" type="number" step="0.0001" value="${Number(rule.offset || 0)}" />
+        </label>
+        <label>
+          <span>颜色</span>
+          <input class="sample-rule-color" type="color" value="${escapeAttribute(rule.color)}" />
+        </label>
+      </div>
+      <div class="sample-rule-status">命中 ${rule.hits} 次，最近值 ${rule.lastValue == null ? '-' : formatNumber(rule.lastValue)}</div>
+    </section>
+  `).join('');
+
+  $$('.sample-rule-card').forEach((card) => {
+    card.addEventListener('input', () => updateSampleRuleFromCard(card));
+    card.addEventListener('change', () => updateSampleRuleFromCard(card));
+  });
+  $$('.sample-rule-delete').forEach((button) => {
+    button.addEventListener('click', () => {
+      const index = Number(button.closest('.sample-rule-card').dataset.sampleIndex);
+      sampleRules.splice(index, 1);
+      persistSampleRules();
+      renderSampleRules();
+      renderSampleLegend();
+    });
+  });
+}
+
+function updateSampleRuleFromCard(card) {
+  const rule = sampleRules[Number(card.dataset.sampleIndex)];
+  if (!rule) {
+    return;
+  }
+  rule.enabled = card.querySelector('.sample-rule-enabled').checked;
+  rule.name = card.querySelector('.sample-rule-name').value.trim() || '未命名通道';
+  rule.type = card.querySelector('.sample-rule-type').value;
+  rule.expression = card.querySelector('.sample-rule-expression').value.trim();
+  rule.group = Number(card.querySelector('.sample-rule-group').value || 1);
+  rule.scale = Number(card.querySelector('.sample-rule-scale').value || 1);
+  rule.offset = Number(card.querySelector('.sample-rule-offset').value || 0);
+  rule.color = card.querySelector('.sample-rule-color').value || rule.color;
+  persistSampleRules();
+  renderSampleLegend();
+  card.classList.toggle('disabled', !rule.enabled);
+}
+
+function addSampleRuleFromPreset() {
+  const type = $('#samplePresetSelect').value;
+  const templates = {
+    regex: { name: '文本数值', type: 'regex', expression: 'value\\s*[:=]\\s*(-?\\d+(?:\\.\\d+)?)', group: 1 },
+    json: { name: 'JSON value', type: 'json', expression: '$.value', group: 1 },
+    csv: { name: 'CSV 列', type: 'csv', expression: '0', group: 1 },
+    hex: { name: 'HEX 数值', type: 'hex', expression: '0:u16be', group: 1 },
+    modbus: { name: 'Modbus 寄存器', type: 'modbus', expression: '0:u16be', group: 1 }
+  };
+  const template = templates[type] || templates.regex;
+  sampleRules.push({
+    id: `sample-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    enabled: true,
+    scale: 1,
+    offset: 0,
+    color: sampleColors[sampleRules.length % sampleColors.length],
+    hits: 0,
+    lastValue: null,
+    ...template
+  });
+  persistSampleRules();
+  renderSampleRules();
+  renderSampleLegend();
+}
+
+function sampleRuleTypeOptions(current) {
+  const options = [
+    ['regex', '文本正则'],
+    ['json', 'JSON 路径'],
+    ['csv', 'CSV 列'],
+    ['hex', 'HEX 偏移'],
+    ['modbus', 'Modbus 寄存器']
+  ];
+  return options.map(([value, label]) => `<option value="${value}" ${value === current ? 'selected' : ''}>${label}</option>`).join('');
+}
+
+function sampleExpressionLabel(type) {
+  if (type === 'regex') return '正则表达式，默认读取捕获组';
+  if (type === 'json') return 'JSON 路径，例如 $.speed 或 $.motor.rpm';
+  if (type === 'csv') return '列索引，从 0 开始';
+  if (type === 'hex') return '字节偏移:类型，例如 0:u16be、2:i16le、4:floatle';
+  if (type === 'modbus') return '寄存器数据偏移:类型，例如 0:u16be';
+  return '表达式';
+}
+
+function normalizeSampleRules(sourceRules) {
+  return sourceRules.map((rule, index) => ({
+    id: rule.id || `sample-${index}-${Date.now()}`,
+    enabled: rule.enabled !== false,
+    name: String(rule.name || `采集通道 ${index + 1}`),
+    type: ['regex', 'json', 'csv', 'hex', 'modbus'].includes(rule.type) ? rule.type : 'regex',
+    expression: String(rule.expression || ''),
+    group: Number(rule.group || 1),
+    scale: Number(rule.scale || 1),
+    offset: Number(rule.offset || 0),
+    color: rule.color || sampleColors[index % sampleColors.length],
+    hits: 0,
+    lastValue: null
+  })).filter((rule) => rule.name && rule.expression);
+}
+
+function cloneSampleRules(sourceRules) {
+  return sourceRules.map((rule) => ({ ...rule, hits: 0, lastValue: null }));
+}
+
+function sampleRuleToProfile(rule) {
+  return {
+    id: rule.id,
+    enabled: rule.enabled,
+    name: rule.name,
+    type: rule.type,
+    expression: rule.expression,
+    group: rule.group,
+    scale: rule.scale,
+    offset: rule.offset,
+    color: rule.color
+  };
+}
+
+function renderSampleLegend() {
+  const legend = $('#sampleLegend');
+  if (!legend) {
+    return;
+  }
+  legend.innerHTML = sampleRules.map((rule) => `
+    <span class="legend-chip">
+      <i class="legend-swatch" style="background:${escapeAttribute(rule.color)}"></i>
+      ${escapeHtml(rule.name)} ${rule.lastValue == null ? '-' : formatNumber(rule.lastValue)}
+    </span>
+  `).join('');
+}
+
 function renderMacros() {
   const macros = loadMacros();
   $('#macroGrid').innerHTML = macros.map((macro, index) => `
@@ -715,6 +1114,7 @@ function currentProfile() {
     autoSendInterval: Number($('#autoSendInterval').value || 1000),
     viewMode: state.viewMode,
     rules: rules.map(ruleToProfile),
+    sampleRules: sampleRules.map(sampleRuleToProfile),
     macros: loadMacros()
   };
 }
@@ -772,6 +1172,12 @@ function applyProfile(profile) {
     rules = normalizeRules(profile.rules);
     persistRules();
     recomputeRuleHits();
+  }
+  if (Array.isArray(profile.sampleRules)) {
+    sampleRules = normalizeSampleRules(profile.sampleRules);
+    persistSampleRules();
+    renderSampleRules();
+    renderSampleLegend();
   }
 }
 
@@ -843,6 +1249,110 @@ function drawRateChart() {
   requestAnimationFrame(drawRateChart);
 }
 
+function drawSampleChart() {
+  const canvas = $('#sampleCanvas');
+  if (!canvas || canvas.offsetParent === null) {
+    requestAnimationFrame(drawSampleChart);
+    return;
+  }
+
+  const ctx = canvas.getContext('2d');
+  const rect = canvas.getBoundingClientRect();
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.round(rect.width * ratio));
+  canvas.height = Math.max(1, Math.round(rect.height * ratio));
+  ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+  ctx.clearRect(0, 0, rect.width, rect.height);
+  ctx.fillStyle = '#0d0f12';
+  ctx.fillRect(0, 0, rect.width, rect.height);
+
+  const padding = { left: 54, right: 16, top: 16, bottom: 28 };
+  const plot = {
+    x: padding.left,
+    y: padding.top,
+    width: Math.max(1, rect.width - padding.left - padding.right),
+    height: Math.max(1, rect.height - padding.top - padding.bottom)
+  };
+
+  drawGrid(ctx, plot);
+  const samples = state.metrics.samples.slice(-600);
+  if (samples.length === 0) {
+    ctx.fillStyle = '#717d8b';
+    ctx.font = '13px Segoe UI';
+    ctx.fillText('等待采集数据：启用规则后，接收帧命中数值会显示在这里', plot.x + 12, plot.y + 24);
+    requestAnimationFrame(drawSampleChart);
+    return;
+  }
+
+  const values = samples.map((sample) => sample.value).filter(Number.isFinite);
+  let min = Math.min(...values);
+  let max = Math.max(...values);
+  if (min === max) {
+    min -= 1;
+    max += 1;
+  }
+  const span = max - min;
+  min -= span * 0.08;
+  max += span * 0.08;
+
+  const firstTime = samples[0].t;
+  const lastTime = samples.at(-1).t;
+  const timeSpan = Math.max(1, lastTime - firstTime);
+
+  ctx.fillStyle = '#9aa7b4';
+  ctx.font = '12px Segoe UI';
+  ctx.fillText(formatNumber(max), 8, plot.y + 12);
+  ctx.fillText(formatNumber(min), 8, plot.y + plot.height);
+
+  for (const rule of sampleRules) {
+    const points = samples.filter((sample) => sample.ruleId === rule.id);
+    if (points.length === 0) {
+      continue;
+    }
+    ctx.strokeStyle = rule.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    points.forEach((sample, index) => {
+      const x = plot.x + ((sample.t - firstTime) / timeSpan) * plot.width;
+      const y = plot.y + plot.height - ((sample.value - min) / (max - min)) * plot.height;
+      if (index === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    const last = points.at(-1);
+    const x = plot.x + ((last.t - firstTime) / timeSpan) * plot.width;
+    const y = plot.y + plot.height - ((last.value - min) / (max - min)) * plot.height;
+    ctx.fillStyle = rule.color;
+    ctx.beginPath();
+    ctx.arc(x, y, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  requestAnimationFrame(drawSampleChart);
+}
+
+function drawGrid(ctx, plot) {
+  ctx.strokeStyle = '#242b33';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 6; i += 1) {
+    const x = plot.x + (plot.width / 6) * i;
+    ctx.beginPath();
+    ctx.moveTo(x, plot.y);
+    ctx.lineTo(x, plot.y + plot.height);
+    ctx.stroke();
+  }
+  for (let i = 0; i <= 4; i += 1) {
+    const y = plot.y + (plot.height / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(plot.x, y);
+    ctx.lineTo(plot.x + plot.width, y);
+    ctx.stroke();
+  }
+  ctx.strokeStyle = '#303943';
+  ctx.strokeRect(plot.x, plot.y, plot.width, plot.height);
+}
+
 function drawSeries(ctx, rect, values, color) {
   if (values.length < 2) return;
   const max = Math.max(32, ...values);
@@ -887,6 +1397,9 @@ function bindEvents() {
     renderLog();
   });
   $('#exportLogButton').addEventListener('click', exportLog);
+  $('#addSampleRuleButton').addEventListener('click', addSampleRuleFromPreset);
+  $('#clearSamplesButton').addEventListener('click', clearSamples);
+  $('#exportSamplesButton').addEventListener('click', exportSamples);
   $('#filterInput').addEventListener('input', renderLog);
   $('#sendModeSelect').addEventListener('change', () => {
     $('#sendModeLabel').textContent = $('#sendModeSelect').value.toUpperCase();
@@ -955,6 +1468,46 @@ async function exportLog() {
   const link = document.createElement('a');
   link.href = url;
   link.download = `serialscope-${Date.now()}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function clearSamples() {
+  state.metrics.samples = [];
+  for (const rule of sampleRules) {
+    rule.hits = 0;
+    rule.lastValue = null;
+  }
+  renderSampleRules();
+  renderSampleLegend();
+  showToast('采集曲线已清空');
+}
+
+async function exportSamples() {
+  const lines = state.metrics.samples.map((sample) => [
+    new Date(sample.t).toISOString(),
+    sample.name,
+    sample.value
+  ].map(csvCell).join(','));
+  const content = `time,channel,value\n${lines.join('\n')}`;
+  if (window.serialScope.saveTextFile) {
+    const result = await window.serialScope.saveTextFile({
+      title: '导出采集数据',
+      defaultPath: `serialscope-samples-${dateStamp()}.csv`,
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+      content
+    });
+    if (!result.canceled) {
+      showToast(result.ok ? `采集数据已导出：${result.filePath}` : result.message || '采集数据导出失败');
+    }
+    return;
+  }
+
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `serialscope-samples-${Date.now()}.csv`;
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -1053,6 +1606,16 @@ function formatBytes(value) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
   return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function formatNumber(value) {
+  if (!Number.isFinite(value)) {
+    return '-';
+  }
+  if (Math.abs(value) >= 1000 || Math.abs(value) < 0.01) {
+    return Number(value).toExponential(2);
+  }
+  return Number(value).toFixed(3).replace(/\.?0+$/, '');
 }
 
 function clamp(value, min, max) {
