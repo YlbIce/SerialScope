@@ -57,8 +57,16 @@
     "Named Pipe JSON-RPC 接入 length 配置留作后续 change，本步 IPC 契约未改变"
   ],
   "handoff": {
-    "state": "ready-for-review",
-    "request": "核对 Length 分帧状态机、includesHeader/大小端语义、超限恢复与防御边界"
+    "state": "review-passed",
+    "reviewResult": "conditionally-approved",
+    "reviewRound": 1,
+    "p1": 0,
+    "p2": 2,
+    "p2Notes": [
+      "未校验 lengthFieldOffset 语义范围（若 offset < header.size()，长度值可能读到非预期字节），建议 spec 补充约束或配置时防御",
+      "测试未覆盖 minFrameSize 强制校验及 lengthFieldOffset 非默认组合；payload 内伪 header 误分帧由后续规则层处理"
+    ],
+    "request": "不得自动归档；P2 可留待后续 change 处理"
   }
 }
 ```

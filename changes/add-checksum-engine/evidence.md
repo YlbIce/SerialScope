@@ -57,8 +57,16 @@
     "ChecksumEngine 暂未接入 Named Pipe JSON-RPC 方法，IPC 契约未改变（本步为纯内部库）"
   ],
   "handoff": {
-    "state": "ready-for-review",
-    "request": "核对算法向量、round-trip/篡改边界、防御性与证据范围"
+    "state": "review-passed",
+    "reviewResult": "conditionally-approved",
+    "reviewRound": 1,
+    "p1": 0,
+    "p2": 2,
+    "p2Notes": [
+      "fromName 未知名静默返回 NONE，接入 JSON-RPC 时非法算法名会被当无校验，建议后续提供错误信号",
+      "CRC 参数固定默认，非标协议需后续可配置化"
+    ],
+    "request": "不得自动归档；P2 可留待后续 change 处理"
   }
 }
 ```
