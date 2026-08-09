@@ -16,6 +16,15 @@
 
 ## 条目
 
+## 2026-08-09 · L2 · add-ai-command-generation（ready-for-review，未归档）
+
+- 需求来源：用户要求继续第 5 步，AI 命令生成 + 宏库复用。
+- 范围：后端注册 `ai.generateCommands`（经 AiAdapter 门面，未启用抛 not-enabled）；main 白名单加入；前端 `#page-protocol` 增加命令生成区（展示 name/HEX/description，每条可加入宏库复用）。mock 不联网、allowDataUpload 默认 false。
+- 实现：`NamedPipeServer` 分发 ai.generateCommands；`main.js` 白名单；`index.html`/`renderer.js` 命令生成区 + 命令→宏映射（code 转 HEX、kind=write、同名覆盖）。
+- 验证：`npm run test:ai-rpc` passed（generateCommands 未启用被拒/启用后返回 mock 命令）；`npm run test:protocol-ai-ui` passed（生成按钮、2 条命令、ReadDeviceInfo HEX 'AA 55 01'、加入宏库持久化）；三个 native tests passed（无回归）；`npm run build:backend`、`npm run check`、`npm run process:check`（19 个活动 change）均 passed。
+- 风险与后续：真实网络 provider 与自然语言命令生成（F-013）为后续 L3；命令响应模板（F-014）留待后续。
+- 关联：`changes/add-ai-command-generation/`；提交 `657b809`，推送 `origin/master`。
+
 ## 2026-08-09 · L2 · review · add-ai-provider-adapter / add-protocol-ai-parse（review-passed，未归档）
 
 - 需求来源：用户要求对第 3、4 步两个 L2 变更包做独立只读审核。
