@@ -16,6 +16,14 @@
 
 ## 条目
 
+## 2026-08-09 · L3 · add-mcp-server P1 修复（ready-for-review，推送待恢复，未归档）
+
+- 需求来源：G3 审核发现 P1（MCP open_connection/configure_connection 复用全局 serial.open 抢占主会话），用户要求修复 P1。
+- 实现：`McpBridge._dispatchTool` 改为 async；新增 `_ensureNotStealingSession`——当前会话已打开不同端口时 MCP open/configure 拒绝（-32003），同端口或空闲时放行。
+- 验证：`npm run test:mcp-authorization` passed（新增 4 个会话隔离场景：抢占被拒/同端口放行/空闲放行/configure 抢占被拒）；`test:mcp-handshake`、`npm run check`、`npm run process:check`（20 个活动 change）passed。
+- 风险与后续：P1 已解决（p1Resolved=true）；P2（send_and_expect 等待、RX 缓冲端口隔离）待后续；COM10/COM11 端到端仍 blocked；真实设备未授权。本地提交 `66ddf31`（P1 修复），连同 `5fbd67b`（G3 审核）、`8b62774`（台账）共 3 个提交**推送 blocked**：连不上 github.com，待恢复后 `git push origin master`。
+- 关联：`changes/add-mcp-server/`；本地提交 `66ddf31`。
+
 ## 2026-08-09 · L3 · review · add-mcp-server G3（conditionally-approved，P1=1/P2=2，未归档）
 
 - 需求来源：用户要求对第 6 步 MCP Server 做 G3 独立审核。
