@@ -16,6 +16,17 @@
 
 ## 条目
 
+## 2026-08-09 · L2 · review · add-checksum-engine / add-length-field-framing（review-passed，未归档）
+
+- 需求来源：用户要求对第 1、2 步两个 L2 变更包做独立只读审核。
+- 方式：逐行核对实现与四份文档；用 Python 独立核算标准向量（CRC8=0x48/CCITT=0x29B1/XMODEM=0x31C3/CRC32=0xCBF43926）确认非自洽错误；重跑 native 测试独立复现 evidence；用一次性临时 harness 验证测试未覆盖边界（帧头噪声 + 长度域偏移 offset=3，行为正确）。
+- 结论：两包均 `conditionally-approved`（P1=0 / P2=2 各）。
+  - add-checksum-engine P2：`fromName` 未知名静默返回 NONE（接入 JSON-RPC 时可能吞错）；CRC 参数固定默认。
+  - add-length-field-framing P2：未校验 `lengthFieldOffset` 语义范围（offset<header.size() 时读到非预期字节）；测试未覆盖 minFrameSize 及非默认 offset 组合，payload 内伪 header 由后续规则层处理。
+- 验证：`npm run process:check`（16 个活动 change）passed；无 lint 错误。
+- 风险与后续：两包 `review-passed`，**不得自动归档**（AGENTS.md 要求人工确认）；推送已恢复，`origin/master` 已同步至 `f0d0e51`。
+- 关联：`changes/add-checksum-engine/`、`changes/add-length-field-framing/`；提交 `f0d0e51`。
+
 ## 2026-08-09 · L2 · add-length-field-framing（ready-for-review，推送待恢复，未归档）
 
 - 需求来源：用户提供的《AI 智能串口调试工具需求规划书 & 方案设计书》，F-008/F-010 要求按帧头特征码+长度域自适应分帧。
