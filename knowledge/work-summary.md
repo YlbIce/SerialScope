@@ -16,6 +16,15 @@
 
 ## 条目
 
+## 2026-08-09 · L2 · add-protocol-import（ready-for-review，未归档）+ MCP UI 修复
+
+- 需求来源：用户反馈 3 项——MCP 启动没反应、无 AI API Key 配置窗口、需支持 Word/PDF 规约导入。
+- 范围（本条目）：修复 MCP 启动无 UI 反馈（renderer 处理 mcp-started/stopped/configure action + 状态查询 + 白名单配置）；新增规约文档导入（docx/pdf/txt/md）。
+- 实现：`protocol-import.js`（mammoth 提取 docx、pdfjs-dist legacy + DOMMatrix polyfill 提取 pdf）；main `file:importProtocol` IPC；renderer `#page-protocol` "导入文档"按钮。pdf-parse v2 因 `@napi-rs/canvas` 原生绑定失败弃用，改用 pdfjs-dist。新增依赖 mammoth ^1.12.0、pdfjs-dist ^5.4.296。
+- 验证：`npm run test:protocol-import` passed（txt/md/pdf/不支持类型）；`npm run test:protocol-ai-ui` passed（导入填入输入框）；ai-rpc/mcp tests passed（无回归）；`npm run check`、`npm run process:check`（21 个活动 change）passed。修复 pdfjs standardFontDataUrl 需正斜杠结尾。
+- 风险与后续：扫描型 PDF（无文本层）解析为空，不引入 OCR；docx 用示例测，真实复杂 docx 待验。真实 AI provider 接入（需求 2）为 L3，待用户明确 provider/Key 存储/上传授权后另行推进。
+- 关联：`changes/add-protocol-import/`；提交 `dc6a957`，推送 `origin/master`。
+
 ## 2026-08-09 · L2 · review · add-ai-command-generation（review-passed，approved，未归档）
 
 - 需求来源：用户要求独立审核第 5 步 AI 命令生成。
