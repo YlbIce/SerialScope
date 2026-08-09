@@ -10,13 +10,14 @@
     "start": "npm run build:renderer && node scripts/run-electron.js",
     "mock:backend": "node scripts/mock-backend.js",
     "build:backend": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
-    "check": "node --check src/main/main.js && node --check src/main/preload.js && node --check src/renderer/renderer.js && node --check scripts/run-electron.js && node --check scripts/mock-backend.js",
+    "check": "node --check src/main/main.js && node --check src/main/preload.js && node --check src/main/mcp-server.js && node --check src/main/mcp-bridge.js && node --check src/main/protocol-import.js && node --check src/renderer/renderer.js && node --check scripts/run-electron.js && node --check scripts/mock-backend.js",
     "process:check": "node scripts/check-process.js",
     "test:named-pipe": "node scripts/test-named-pipe.js && node scripts/test-main-named-pipe-client.js && node scripts/test-named-pipe-boundary.js && node scripts/test-named-pipe-ready-timeout.js",
     "test:ai-rpc": "node scripts/test-ai-rpc.js",
     "test:protocol-ai-ui": "electron scripts/test-protocol-ai-ui.js",
     "test:mcp-handshake": "node scripts/test-mcp-handshake.js",
     "test:mcp-authorization": "node scripts/test-mcp-authorization.js",
+    "test:protocol-import": "node scripts/test-protocol-import.js",
     "test:named-pipe-serial": "node scripts/test-named-pipe-serial.js",
     "test:named-pipe-fixed-frame": "node scripts/test-named-pipe-fixed-frame.js",
     "test:named-pipe-outbound-boundary": "node scripts/test-named-pipe-outbound-boundary.js",
@@ -49,6 +50,8 @@
   },
   "dependencies": {
     "@xyflow/react": "^12.10.0",
+    "mammoth": "^1.12.0",
+    "pdfjs-dist": "^5.4.296",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   }

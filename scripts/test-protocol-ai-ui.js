@@ -57,6 +57,7 @@ app.whenReady().then(async () => {
     });
     ipcMain.handle('file:saveText', () => ({ canceled: true }));
     ipcMain.handle('file:openJson', () => ({ canceled: true }));
+    ipcMain.handle('file:importProtocol', () => ({ ok: true, canceled: false, text: '帧头 0xAA 0x55；长度域 1 字节（从文档导入）' }));
 
     window = new BrowserWindow({
       width: 1200, height: 800, show: false,
@@ -70,6 +71,12 @@ app.whenReady().then(async () => {
     // 1. 导航到 page-protocol
     await rendererValue("handleUiAction({ action: 'navigate', payload: { pageId: 'page-protocol' } })");
     await waitForRenderer("document.querySelector('#page-protocol').classList.contains('active')", 'protocol page active');
+
+    // 1.5 导入文档按钮填入规约输入框
+    await rendererValue("document.querySelector('#importProtocolButton').click()");
+    await waitForRenderer(
+      "document.querySelector('#protocolTextInput').value.includes('从文档导入')",
+      'import document fills protocol text input');
 
     // 2. AI 初始未启用
     await waitForRenderer("document.querySelector('#aiStatusLabel').textContent.includes('AI 未启用')", 'AI initially disabled');

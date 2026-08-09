@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "add-protocol-import",
+  "title": "Import protocol documents (Word/PDF) into protocol text input",
+  "riskTier": "L2",
+  "state": "ready-for-review",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}

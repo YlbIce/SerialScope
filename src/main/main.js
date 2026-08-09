@@ -8,6 +8,7 @@ const { NamedPipeRpcClient } = require('./named-pipe-rpc');
 const { createWorkbenchExecutionAuthorizer } = require('./workbench-execution');
 const { findRegisteredVirtualSimulatorPort } = require('./virtual-simulator-port');
 const { McpBridge } = require('./mcp-bridge');
+const { extractProtocolText } = require('./protocol-import');
 
 // 串口工具的核心功能不依赖 GPU。部分 Windows 环境缺少 Chromium GPU
 // 子进程所需运行库时，强制软件渲染可避免应用在创建窗口前直接退出。
@@ -519,6 +520,27 @@ ipcMain.handle('mcp:setPorts', (_event, ports) => {
 });
 
 ipcMain.handle('window:openModule', (_event, moduleId) => openModuleWindow(moduleId));
+
+ipcMain.handle('file:importProtocol', async (_event) => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: '导入规约文档',
+    filters: [
+      { name: '规约文档', extensions: ['docx', 'pdf', 'txt', 'md'] },
+      { name: 'Word 文档', extensions: ['docx'] },
+      { name: 'PDF', extensions: ['pdf'] },
+      { name: '文本/Markdown', extensions: ['txt', 'md'] }
+    ],
+    properties: ['openFile']
+  });
+  if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+    return { ok: false, canceled: true, message: '已取消导入' };
+  }
+  try {
+    return await extractProtocolText(result.filePaths[0]);
+  } catch (error) {
+    return { ok: false, canceled: false, message: error.message || '文档解析失败' };
+  }
+});
 
 ipcMain.handle('file:saveText', async (_event, options = {}) => {
   const result = await dialog.showSaveDialog(mainWindow, {

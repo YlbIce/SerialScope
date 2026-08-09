@@ -2305,6 +2305,20 @@ function addCommandToMacros(command) {
   showToast(`命令“${name}”已加入宏库`);
 }
 
+async function importProtocolDocument() {
+  try {
+    const result = await window.serialScope.importProtocolFile();
+    if (!result.ok) {
+      if (!result.canceled) showToast(result.message || '导入失败');
+      return;
+    }
+    $('#protocolTextInput').value = result.text || '';
+    showToast('规约文档已导入');
+  } catch (error) {
+    showToast(error.message || '导入文档失败');
+  }
+}
+
 function initAiPanel() {
   const saved = loadSavedProtocol();
   if (saved) {
@@ -2312,6 +2326,7 @@ function initAiPanel() {
     renderProtocolResult();
   }
   refreshAiStatus();
+  $('#importProtocolButton').addEventListener('click', importProtocolDocument);
   $('#aiEnableButton').addEventListener('click', enableAi);
   $('#aiParseButton').addEventListener('click', parseProtocol);
   $('#aiGenerateButton').addEventListener('click', generateAiCommands);
