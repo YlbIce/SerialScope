@@ -89,6 +89,27 @@ target_link_libraries(serialscope-frame-decoder-tests PRIVATE
   nlohmann_json::nlohmann_json
 )
 
+add_executable(serialscope-checksum-engine-tests
+  tests/ChecksumEngineTests.cpp
+  src/ChecksumEngine.cpp
+  src/ProtocolUtils.cpp
+)
+
+target_compile_definitions(serialscope-checksum-engine-tests PRIVATE
+  WIN32_LEAN_AND_MEAN
+  NOMINMAX
+)
+
+target_include_directories(serialscope-checksum-engine-tests PRIVATE src)
+
+if (MSVC)
+  target_compile_options(serialscope-checksum-engine-tests PRIVATE /utf-8 /permissive-)
+endif()
+
+target_link_libraries(serialscope-checksum-engine-tests PRIVATE
+  nlohmann_json::nlohmann_json
+)
+
 add_executable(serialscope-virtual-serial-writer tests/VirtualSerialWriter.cpp)
 add_executable(serialscope-virtual-serial-reader tests/VirtualSerialReader.cpp)
 add_executable(serialscope-virtual-serial-roundtrip tests/VirtualSerialRoundTrip.cpp)
