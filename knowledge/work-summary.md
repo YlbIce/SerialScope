@@ -16,6 +16,15 @@
 
 ## 条目
 
+## 2026-08-09 · 修复 · extractJson 支持数组（命令生成 JSON 解析失败）
+
+- 问题：真实 DeepSeek 命令生成报 `SyntaxError: Expected ',' or ']' after array element`。
+- 根因：`extractJson` 只找 `{`/`}`（对象），命令生成返回数组 `[...]` 时截取丢失 `[`/`]`，顶层为裸对象序列导致 JSON.parse 失败。
+- 修复：`extractJson` 检测顶层 `{` 或 `[`，括号配对（字符串感知）截取，容忍前缀说明文字与 fenced 代码块；导出供测试。
+- 验证：`npm run test:deepseek` passed（extractJson 数组 fenced/对象/裸数组、配置持久化等）；`npm run check`、`npm run process:check`（22 个活动 change）passed。
+- 风险与后续：真实 DeepSeek 调用待用户本机设 DEEPSEEK_API_KEY 验证；本地提交 `1555dc5` 已完成，**推送 blocked**（网络连不上 github.com，含此前 `c9b80b5`/`744e307` 共 3 个提交待推送）。
+- 关联：提交 `1555dc5`。
+
 ## 2026-08-09 · 修复 · ai:test 测试连接用输入框 Key（推送待恢复）
 
 - 问题：用户在应用测试连接先报 401 `****9e9a`（用了已轮换作废的旧 Key），更换新 Key 后报"未配置 DeepSeek API Key"。
