@@ -53,6 +53,11 @@ const state = {
     rightPanel: 340,
     bottomPanel: 230,
     hiddenPanels: []
+  },
+  ai: {
+    enabled: false,
+    allowDataUpload: false,
+    protocol: null
   }
 };
 
@@ -187,6 +192,7 @@ async function boot() {
   renderSampleRules();
   renderMacros();
   renderSimulator();
+  initAiPanel();
   restoreProfile();
   restoreSerialDraft();
   updateFramingUi();
@@ -2056,6 +2062,152 @@ function handleUiAction(detail) {
   if (action === 'reset-layout') return resetLayout();
   if (action === 'edit-rules') return openRuleConfig();
   if (action === 'about') return showToast('SerialScope Native · Named Pipe + JSON-RPC');
+}
+
+// ---- AI 规约解析（page-protocol）----
+function protocolStorageKey() { return 'serialscope.protocol'; }
+
+function loadSavedProtocol() {
+  try {
+    return JSON.parse(localStorage.getItem(protocolStorageKey())) || null;
+  } catch {
+    return null;
+  }
+}
+
+function persistProtocol(saved) {
+  localStorage.setItem(protocolStorageKey(), JSON.stringify(saved));
+}
+
+function escapeHtml(text) {
+  return String(text ?? '').replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+  })[ch]);
+}
+
+function bytesToHexLabel(bytes) {
+  if (!Array.isArray(bytes) || bytes.length === 0) return '(空)';
+  return bytes.map((b) => `0x${Number(b).toString(16).toUpperCase().padStart(2, '0')}`).join(' ');
+}
+
+async function refreshAiStatus() {
+  try {
+    const status = await window.serialScope.callBackend('ai.status');
+    state.ai.enabled = Boolean(status.enabled);
+    state.ai.allowDataUpload = Boolean(status.allowDataUpload);
+    const label = $('#aiStatusLabel');
+    label.textContent = state.ai.enabled
+      ? `AI 已启用（provider: ${status.provider || 'mock'}，上传: ${state.ai.allowDataUpload ? '允许' : '禁止'}）`
+      : 'AI 未启用';
+    $('#aiEnableButton').textContent = state.ai.enabled ? 'AI 已启用' : '启用 AI';
+    $('#aiParseButton').disabled = !state.ai.enabled;
+  } catch (error) {
+    showToast(error.message || '无法获取 AI 状态');
+  }
+}
+
+async function enableAi() {
+  try {
+    const result = await window.serialScope.callBackend('ai.configure', { enabled: true });
+    state.ai.enabled = Boolean(result.enabled);
+    await refreshAiStatus();
+    showToast('AI 已启用（本地 mock，不上传数据）');
+  } catch (error) {
+    showToast(error.message || '启用 AI 失败');
+  }
+}
+
+async function parseProtocol() {
+  const text = $('#protocolTextInput').value.trim();
+  if (!text) {
+    showToast('请先输入规约文本');
+    return;
+  }
+  $('#aiParseButton').disabled = true;
+  $('#aiParseButton').textContent = '解析中…';
+  try {
+    const result = await window.serialScope.callBackend('ai.parseProtocol', { text });
+    state.ai.protocol = {
+      header: Array.isArray(result.header) ? result.header : [],
+      lengthFieldOffset: result.lengthFieldOffset ?? 0,
+      lengthFieldSize: result.lengthFieldSize ?? 0,
+      fields: Array.isArray(result.fields) ? result.fields : []
+    };
+    renderProtocolResult();
+  } catch (error) {
+    showToast(error.message || '解析规约失败');
+  } finally {
+    $('#aiParseButton').textContent = '解析规约';
+    if (state.ai.enabled) $('#aiParseButton').disabled = false;
+  }
+}
+
+function renderProtocolResult() {
+  const container = $('#protocolParseResult');
+  const p = state.ai.protocol;
+  if (!p) {
+    container.className = 'protocol-result empty';
+    container.innerHTML = '尚未解析。点击“解析规约”查看 AI 提取的帧头、长度域与字段。';
+    return;
+  }
+  container.className = 'protocol-result';
+  const rows = p.fields.map((field, index) => `
+    <div class="protocol-field-row" data-index="${index}">
+      <label>名称<input class="pf-name" type="text" value="${escapeHtml(field.name)}" /></label>
+      <label>偏移<input class="pf-offset" type="number" min="0" value="${Number(field.offset) || 0}" /></label>
+      <label>字节数<input class="pf-size" type="number" min="0" value="${Number(field.size) || 0}" /></label>
+    </div>`).join('');
+  container.innerHTML = `
+    <p class="protocol-summary">帧头：<strong>${escapeHtml(bytesToHexLabel(p.header))}</strong>　长度域偏移：<strong>${p.lengthFieldOffset}</strong>　长度域字节数：<strong>${p.lengthFieldSize}</strong></p>
+    <p>字段表（可编辑）：</p>
+    ${rows || '<p class="empty">（无字段）</p>'}
+    <div class="button-row">
+      <button id="saveProtocolButtonInner" class="primary-button" type="button">保存校正结果</button>
+      <button id="exportProtocolButton" class="text-button" type="button">导出 JSON</button>
+    </div>`;
+  $('#saveProtocolButtonInner').addEventListener('click', saveProtocolCorrections);
+  $('#exportProtocolButton').addEventListener('click', exportProtocolJson);
+}
+
+function saveProtocolCorrections() {
+  const p = state.ai.protocol;
+  if (!p) return;
+  const fields = [];
+  document.querySelectorAll('#protocolParseResult .protocol-field-row').forEach((row) => {
+    fields.push({
+      name: row.querySelector('.pf-name').value.trim(),
+      offset: Number(row.querySelector('.pf-offset').value) || 0,
+      size: Number(row.querySelector('.pf-size').value) || 0
+    });
+  });
+  p.fields = fields;
+  persistProtocol(p);
+  showToast('校正结果已保存到本地配置');
+}
+
+async function exportProtocolJson() {
+  const p = state.ai.protocol;
+  if (!p) return;
+  const label = (p.header || []).map((b) => Number(b).toString(16).padStart(2, '0')).join('') || 'protocol';
+  await window.serialScope.saveTextFile({
+    title: '导出规约配置',
+    defaultPath: `protocol-${label}.json`,
+    content: JSON.stringify(p, null, 2)
+  });
+}
+
+function initAiPanel() {
+  const saved = loadSavedProtocol();
+  if (saved) {
+    state.ai.protocol = saved;
+    renderProtocolResult();
+  }
+  refreshAiStatus();
+  $('#aiEnableButton').addEventListener('click', enableAi);
+  $('#aiParseButton').addEventListener('click', parseProtocol);
+  $('#saveProtocolButton').addEventListener('click', () => {
+    if (state.ai.protocol) renderProtocolResult();
+  });
 }
 
 async function openSerialConfiguration() {

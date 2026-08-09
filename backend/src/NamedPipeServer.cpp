@@ -142,7 +142,8 @@ bool isCurrentSessionClient(HANDLE pipe) {
 NamedPipeServer::NamedPipeServer(asio::io_context& io, std::wstring pipeName)
   : io_(io),
     pipeName_(std::move(pipeName)),
-    serial_(std::make_shared<SerialSession>(io_)) {
+    serial_(std::make_shared<SerialSession>(io_)),
+    ai_(std::make_shared<ai::AiAdapter>()) {
   serial_->setEventHandler([this](Json event) { emitNotification(std::move(event)); });
 }
 
@@ -391,12 +392,16 @@ Json NamedPipeServer::dispatchSingle(const Json& request, bool& shouldStop) {
   }
   const bool knownMethod = method == "backend.ping" || method == "backend.shutdown"
     || method == "ports.list" || method == "serial.status" || method == "serial.open" || method == "serial.close" || method == "serial.send"
+    || method == "ai.status" || method == "ai.configure" || method == "ai.parseProtocol"
     || (method == "backend.testPayload" && testModeEnabled());
   if (!knownMethod) return isNotification ? Json() : makeError(id, -32601, "Method not found");
 
   try {
     const Json result = callSerial(method, params, shouldStop);
     return isNotification ? Json() : Json({{"jsonrpc", "2.0"}, {"id", id}, {"result", result}});
+  } catch (const ai::AiError& error) {
+    const std::string message = std::string("[") + error.code() + "] " + error.what();
+    return isNotification ? Json() : makeError(id, -32000, message);
   } catch (const std::exception& error) {
     return isNotification ? Json() : makeError(id, -32000, error.what());
   }
@@ -418,6 +423,32 @@ Json NamedPipeServer::callSerial(const std::string& method, const Json& params, 
     const std::uint64_t bytes = params.at("bytes").get<std::uint64_t>();
     if (bytes > kMaxMessageBytes) throw std::runtime_error("Test payload exceeds message boundary");
     return {{"payload", std::string(static_cast<std::size_t>(bytes), 'x')}};
+  }
+
+  if (method == "ai.status") {
+    return {{"enabled", ai_->enabled()}, {"allowDataUpload", ai_->allowDataUpload()}, {"provider", ai_->providerName()}};
+  }
+  if (method == "ai.configure") {
+    if (!params.is_object()) throw std::runtime_error("Invalid ai.configure params");
+    if (params.contains("enabled")) ai_->configure(params.at("enabled").get<bool>(), ai_->allowDataUpload());
+    if (params.contains("allowDataUpload")) ai_->configure(ai_->enabled(), params.at("allowDataUpload").get<bool>());
+    return {{"enabled", ai_->enabled()}, {"allowDataUpload", ai_->allowDataUpload()}, {"provider", ai_->providerName()}};
+  }
+  if (method == "ai.parseProtocol") {
+    if (!params.is_object() || !params.contains("text") || !params.at("text").is_string()) {
+      throw std::runtime_error("Invalid ai.parseProtocol params");
+    }
+    // AiAdapter::parseProtocol 内部 ensureAuthorized：未启用抛 AiError("not-enabled")，
+    // 由 dispatchSingle 的 catch 转成 JSON-RPC error。
+    const ai::ProtocolParseResult result = ai_->parseProtocol(params.at("text").get<std::string>());
+    Json header = Json::array();
+    for (const auto byte : result.header) header.push_back(byte);
+    Json fields = Json::array();
+    for (const auto& field : result.fields) {
+      fields.push_back({{"name", field.name}, {"offset", field.offset}, {"size", field.size}});
+    }
+    return {{"header", header}, {"lengthFieldOffset", result.lengthFieldOffset},
+            {"lengthFieldSize", result.lengthFieldSize}, {"fields", fields}};
   }
 
   auto result = std::make_shared<std::promise<Json>>();

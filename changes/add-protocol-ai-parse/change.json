@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "add-protocol-ai-parse",
+  "title": "Expose ai.* IPC and add protocol parse + manual correction UI",
+  "riskTier": "L2",
+  "state": "ready-for-review",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}

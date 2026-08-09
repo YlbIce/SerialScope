@@ -13,6 +13,8 @@
     "check": "node --check src/main/main.js && node --check src/main/preload.js && node --check src/renderer/renderer.js && node --check scripts/run-electron.js && node --check scripts/mock-backend.js",
     "process:check": "node scripts/check-process.js",
     "test:named-pipe": "node scripts/test-named-pipe.js && node scripts/test-main-named-pipe-client.js && node scripts/test-named-pipe-boundary.js && node scripts/test-named-pipe-ready-timeout.js",
+    "test:ai-rpc": "node scripts/test-ai-rpc.js",
+    "test:protocol-ai-ui": "electron scripts/test-protocol-ai-ui.js",
     "test:named-pipe-serial": "node scripts/test-named-pipe-serial.js",
     "test:named-pipe-fixed-frame": "node scripts/test-named-pipe-fixed-frame.js",
     "test:named-pipe-outbound-boundary": "node scripts/test-named-pipe-outbound-boundary.js",

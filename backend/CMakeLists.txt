@@ -35,6 +35,7 @@ add_subdirectory(vendor/CSerialPort EXCLUDE_FROM_ALL)
 
 add_executable(serialscope-backend
   src/main.cpp
+  src/AiAdapter.cpp
   src/FrameDecoder.cpp
   src/ProtocolUtils.cpp
   src/SerialSession.cpp

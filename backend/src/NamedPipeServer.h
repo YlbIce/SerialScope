@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AiAdapter.h"
 #include "SerialSession.h"
 
 #include <atomic>
@@ -40,6 +41,7 @@ private:
   boost::asio::io_context& io_;
   std::wstring pipeName_;
   std::shared_ptr<SerialSession> serial_;
+  std::shared_ptr<ai::AiAdapter> ai_;
   std::atomic_bool stopping_ {false};
   std::mutex pipeMutex_;
   HANDLE pipe_ = INVALID_HANDLE_VALUE;

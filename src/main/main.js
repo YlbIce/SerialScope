@@ -316,6 +316,7 @@ function createApplicationMenu() {
         page('规则配置', 'page-rules', 'Ctrl+3'),
         page('宏命令', 'page-macros', 'Ctrl+4'),
         page('模拟下位机', 'page-simulator', 'Ctrl+5'),
+        page('AI 规约解析', 'page-protocol', 'Ctrl+6'),
         { type: 'separator' },
         { label: '恢复默认布局', click: () => sendUiAction('reset-layout') }
       ]
@@ -464,7 +465,7 @@ ipcMain.on('simulator:activity', (event, activity = {}) => {
   });
 });
 
-const allowedRpcMethods = new Set(['ports.list', 'serial.status', 'serial.open', 'serial.close', 'serial.send']);
+const allowedRpcMethods = new Set(['ports.list', 'serial.status', 'serial.open', 'serial.close', 'serial.send', 'ai.status', 'ai.configure', 'ai.parseProtocol']);
 
 ipcMain.handle('backend:rpc', async (_event, method, params = {}) => {
   if (typeof method !== 'string' || !allowedRpcMethods.has(method)) throw new Error('不允许的后端 RPC 方法');
