@@ -65,8 +65,16 @@
     "test:protocol-ai-ui 的 stopBackend 清理会产生 'Named Pipe 后端已断开' 噪音，不影响断言"
   ],
   "handoff": {
-    "state": "ready-for-review",
-    "request": "核对 ai.* IPC 授权边界、main 白名单、前端校正 UI 与证据范围"
+    "state": "review-passed",
+    "reviewResult": "conditionally-approved",
+    "reviewRound": 1,
+    "p1": 0,
+    "p2": 2,
+    "p2Notes": [
+      "ai.configure 的 enabled/allowDataUpload 用 .get<bool>() 强转，非 bool 输入报错但不崩，建议后续明确校验",
+      "前端校正 UI 仅 Electron 自动化验证，不同 DPI 视觉未覆盖；mock 解析价值待真实 provider"
+    ],
+    "request": "不得自动归档；P2 留待真实 provider 接入前处理"
   }
 }
 ```

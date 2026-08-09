@@ -57,8 +57,15 @@
     "未来在 IPC 暴露 ai.* 时若绕过 AiAdapter 授权检查会破坏数据边界，须在接入 change 中强制复用本门面"
   ],
   "handoff": {
-    "state": "ready-for-review",
-    "request": "核对授权边界（not-enabled / data-upload-denied）、mock 确定性与无网络行为声明"
+    "state": "review-passed",
+    "reviewResult": "conditionally-approved",
+    "reviewRound": 1,
+    "p1": 0,
+    "p2": 1,
+    "p2Notes": [
+      "ai.configure（在 add-protocol-ai-parse）允许外部设置 allowDataUpload=true；接入真实需上传 provider 前须升级为 L3 显式授权机制"
+    ],
+    "request": "不得自动归档；P2 留待真实 provider 接入前处理"
   }
 }
 ```

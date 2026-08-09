@@ -3,8 +3,14 @@
   "id": "add-ai-provider-adapter",
   "title": "Add AI adapter interface with local-only mock provider to backend",
   "riskTier": "L2",
-  "state": "ready-for-review",
+  "state": "review-passed",
   "owner": "implementer",
   "reviewMode": "S",
-  "archiveRequiresHumanConfirmation": true
+  "archiveRequiresHumanConfirmation": true,
+  "review": {
+    "result": "conditionally-approved",
+    "reviewRound": 1,
+    "p1": 0,
+    "p2": 1
+  }
 }
