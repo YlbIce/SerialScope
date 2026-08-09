@@ -37,7 +37,7 @@
       "command": "npm run test:mcp-authorization",
       "kind": "integration-test",
       "status": "passed",
-      "purpose": "验证端口白名单外写被拒（-32002）、白名单内 send_data 映射 serial.send、方法白名单外被拒（-32001）、read_data 快照、白名单持久化、缺 payload 被拒（-32602）",
+      "purpose": "验证端口白名单外写被拒（-32002）、白名单内 send_data 映射 serial.send、方法白名单外被拒（-32001）、read_data 快照、白名单持久化、缺 payload 被拒（-32602）、P1 会话隔离（当前会话已打开不同端口时 MCP open/configure 被拒 -32003；同端口或空闲时放行）",
       "doesNotProve": "真实串口收发"
     },
     {

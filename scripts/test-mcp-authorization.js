@@ -1,16 +1,19 @@
 // MCP 授权逻辑测试（不依赖虚拟串口）。
-// 验证 McpBridge 端口白名单拒绝、方法白名单拒绝、read_data 快照、白名单持久化。
+// 验证 McpBridge 端口白名单拒绝、方法白名单拒绝、read_data 快照、白名单持久化、P1 会话隔离。
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { McpBridge } = require('../src/main/mcp-bridge');
 
-function mockRpc() {
+// 可配置的 mock RPC：serial.status 返回指定状态。
+function mockRpc(statusOverride) {
   const calls = [];
   return {
     calls,
     async call(method, params) {
       calls.push({ method, params });
+      if (method === 'serial.status' && statusOverride) return statusOverride;
+      if (method === 'serial.status') return { isOpen: false, portName: '' };
       return { ok: true, method };
     }
   };
@@ -29,38 +32,42 @@ function callTool(bridge, tool, params) {
   });
 }
 
+async function expectRejected(bridge, tool, params, expectedCode, label) {
+  let denied = false;
+  let gotCode = null;
+  let gotMsg = '';
+  try {
+    await callTool(bridge, tool, params);
+  } catch (e) {
+    gotCode = e.mcpCode;
+    gotMsg = e.message;
+    denied = e.mcpCode === expectedCode;
+  }
+  if (!denied) throw new Error(`${label} should be rejected with ${expectedCode} (got code=${gotCode} msg=${gotMsg})`);
+}
+
 async function main() {
   const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'serialscope-mcp-auth-'));
   try {
-    const rpc = mockRpc();
-    const allowedRpcMethods = new Set(['ports.list', 'serial.send']);
-    const bridge = new McpBridge({ backendRpc: rpc, allowedRpcMethods, userDataPath: userData });
+    const allowedFull = new Set(['ports.list', 'serial.status', 'serial.send', 'serial.open']);
+    const allowedNoOpen = new Set(['ports.list', 'serial.status', 'serial.send']);
+
+    // 场景 1：方法白名单外（open_connection 需 serial.open，但 allowedNoOpen 不含）
+    const rpc0 = mockRpc();
+    const bridge0 = new McpBridge({ backendRpc: rpc0, allowedRpcMethods: allowedNoOpen, userDataPath: userData });
+    bridge0.setAllowedPorts(['COM10']);
+    await expectRejected(bridge0, 'open_connection', { port: 'COM10', baudRate: 9600 }, -32001, 'method outside allowedRpcMethods');
+
+    // 场景 2：白名单内 send_data 映射到 serial.send
+    const rpc1 = mockRpc();
+    const bridge = new McpBridge({ backendRpc: rpc1, allowedRpcMethods: allowedFull, userDataPath: userData });
     bridge.setAllowedPorts(['COM10']);
-
-    // 1. 白名单外端口写被拒
-    let denied = false;
-    try {
-      await callTool(bridge, 'send_data', { port: 'COM5', hex: 'AA' });
-    } catch (e) {
-      denied = e.mcpCode === -32002 && e.message.includes('白名单');
-    }
-    if (!denied) throw new Error('white-list outside port should be denied');
-
-    // 2. 白名单内端口放行，映射到 serial.send
+    await expectRejected(bridge, 'send_data', { port: 'COM5', hex: 'AA' }, -32002, 'white-list outside port');
     await callTool(bridge, 'send_data', { port: 'COM10', hex: 'AA 55' });
-    const sendCall = rpc.calls.find((c) => c.method === 'serial.send');
+    const sendCall = rpc1.calls.find((c) => c.method === 'serial.send');
     if (!sendCall || sendCall.params.data !== 'AA 55') throw new Error('send_data did not map to serial.send hex');
 
-    // 3. 方法白名单外（open_connection 不在 allowedRpcMethods）被拒
-    denied = false;
-    try {
-      await callTool(bridge, 'open_connection', { port: 'COM10', baudRate: 9600 });
-    } catch (e) {
-      denied = e.mcpCode === -32001;
-    }
-    if (!denied) throw new Error('method outside allowedRpcMethods should be denied');
-
-    // 4. read_data 快照（先 append 帧）
+    // read_data 快照
     bridge.appendRxFrame({ hex: 'AA 55', text: '..' });
     bridge.appendRxFrame({ hex: 'BB 01', text: '..' });
     const frames = await callTool(bridge, 'read_data', { count: 1 });
@@ -68,24 +75,43 @@ async function main() {
       throw new Error(`read_data snapshot mismatch: ${JSON.stringify(frames)}`);
     }
 
-    // 5. 端口白名单持久化（重启加载）
+    // 端口白名单持久化
     bridge.setAllowedPorts(['COM11']);
-    const bridge2 = new McpBridge({ backendRpc: mockRpc(), allowedRpcMethods, userDataPath: userData });
+    const bridge2 = new McpBridge({ backendRpc: mockRpc(), allowedRpcMethods: allowedFull, userDataPath: userData });
     const ports = bridge2.getAllowedPorts();
     if (ports.length !== 1 || ports[0] !== 'COM11') throw new Error(`white-list persistence failed: ${JSON.stringify(ports)}`);
 
-    // 6. send_data 无 payload 被拒（COM11 在白名单，但缺 payload）
-    denied = false;
-    let gotCode = null;
-    let gotMsg = '';
-    try {
-      await callTool(bridge, 'send_data', { port: 'COM11' });
-    } catch (e) {
-      gotCode = e.mcpCode;
-      gotMsg = e.message;
-      denied = e.mcpCode === -32602;
-    }
-    if (!denied) throw new Error(`send_data without payload should be rejected (got code=${gotCode} msg=${gotMsg})`);
+    // send_data 无 payload 被拒
+    await expectRejected(bridge, 'send_data', { port: 'COM11' }, -32602, 'send_data without payload');
+
+    // ---- P1 会话隔离 ----
+    // 场景 3：主界面已打开 COM20（不同端口），MCP open COM10 应被拒（-32003）
+    const rpcBusy = mockRpc({ isOpen: true, portName: 'COM20' });
+    const bridgeBusy = new McpBridge({ backendRpc: rpcBusy, allowedRpcMethods: allowedFull, userDataPath: userData });
+    bridgeBusy.setAllowedPorts(['COM10', 'COM20']);
+    await expectRejected(bridgeBusy, 'open_connection', { port: 'COM10', baudRate: 9600 }, -32003, 'MCP steal session (COM10 while COM20 open)');
+
+    // 场景 4：主界面已打开 COM10（同一端口），MCP open COM10 应放行（不抢占同端口）
+    const rpcSame = mockRpc({ isOpen: true, portName: 'COM10' });
+    const bridgeSame = new McpBridge({ backendRpc: rpcSame, allowedRpcMethods: allowedFull, userDataPath: userData });
+    bridgeSame.setAllowedPorts(['COM10']);
+    await callTool(bridgeSame, 'open_connection', { port: 'COM10', baudRate: 9600 });
+    const openSameCall = rpcSame.calls.find((c) => c.method === 'serial.open');
+    if (!openSameCall || openSameCall.params.portName !== 'COM10') throw new Error('MCP open same port should be allowed');
+
+    // 场景 5：主界面未打开串口，MCP open COM10 应放行
+    const rpcFree = mockRpc();
+    const bridgeFree = new McpBridge({ backendRpc: rpcFree, allowedRpcMethods: allowedFull, userDataPath: userData });
+    bridgeFree.setAllowedPorts(['COM10']);
+    await callTool(bridgeFree, 'open_connection', { port: 'COM10', baudRate: 9600 });
+    const openFreeCall = rpcFree.calls.find((c) => c.method === 'serial.open');
+    if (!openFreeCall || openFreeCall.params.portName !== 'COM10') throw new Error('MCP open free port should be allowed');
+
+    // 场景 6：configure_connection 在已有不同端口会话时应被拒
+    const rpcCfg = mockRpc({ isOpen: true, portName: 'COM20' });
+    const bridgeCfg = new McpBridge({ backendRpc: rpcCfg, allowedRpcMethods: allowedFull, userDataPath: userData });
+    bridgeCfg.setAllowedPorts(['COM10', 'COM20']);
+    await expectRejected(bridgeCfg, 'configure_connection', { port: 'COM10', baudRate: 9600 }, -32003, 'MCP configure steal session');
 
     console.log('MCP authorization passed');
   } finally {

@@ -96,14 +96,14 @@ class McpBridge {
     return this.running;
   }
 
-  _handleChildMessage(message) {
+  async _handleChildMessage(message) {
     if (!message || message.type !== 'mcp-tool-call') return;
     const { callId, tool, params } = message;
     let result;
     let errorCode = null;
     let errorMsg = null;
     try {
-      result = this._dispatchTool(tool, params);
+      result = await this._dispatchTool(tool, params);
     } catch (error) {
       errorCode = error.mcpCode || -32000;
       errorMsg = error.message || '工具调用失败';
@@ -133,7 +133,7 @@ class McpBridge {
     }
   }
 
-  _dispatchTool(tool, params) {
+  async _dispatchTool(tool, params) {
     switch (tool) {
       case 'list_ports':
         return this._call('ports.list', {});
@@ -143,6 +143,8 @@ class McpBridge {
         return { frames: this.getRxFrames(params.count) };
       case 'open_connection': {
         this._requireAllowedPort(params.port);
+        // P1 会话隔离：若主界面当前已打开不同端口，MCP 不得抢占。
+        await this._ensureNotStealingSession(params.port);
         return this._call('serial.open', {
           portName: params.port,
           baudRate: params.baudRate ?? 9600,
@@ -165,6 +167,8 @@ class McpBridge {
       }
       case 'configure_connection': {
         this._requireAllowedPort(params.port);
+        // P1 会话隔离：configure 只能作用于当前已打开的同一端口，不能改/抢占其他端口会话。
+        await this._ensureNotStealingSession(params.port);
         return this._call('serial.open', {
           portName: params.port,
           baudRate: params.baudRate ?? 9600,
@@ -179,6 +183,16 @@ class McpBridge {
         err.mcpCode = -32602;
         throw err;
       }
+    }
+  }
+
+  // P1 会话隔离：若后端当前已打开串口且端口不是目标端口，拒绝 MCP 抢占/切换主会话。
+  async _ensureNotStealingSession(targetPort) {
+    const status = await this._call('serial.status', {});
+    if (status && status.isOpen && status.portName && status.portName !== targetPort) {
+      const err = new Error(`MCP 不得抢占当前串口会话（已打开 ${status.portName}，目标 ${targetPort}）`);
+      err.mcpCode = -32003;
+      throw err;
     }
   }
 

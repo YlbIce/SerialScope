@@ -13,11 +13,11 @@
     "p1": 1,
     "p2": 2,
     "stage": "G3-implementation",
-    "p1Resolved": false,
+    "p1Resolved": true,
     "p2Resolved": false,
     "g3": {
       "p1": [
-        "MCP open_connection/configure_connection 复用全局 serial.open，会抢占/替换 Electron 主界面当前串口会话；MCP 打开端口可能干扰主会话，缺乏会话隔离，须在实现中约束"
+        "MCP open_connection/configure_connection 复用全局 serial.open，会抢占/替换 Electron 主界面当前串口会话；已通过 _ensureNotStealingSession 修复：当前会话已打开不同端口时 MCP 拒绝（-32003），同端口或空闲时放行"
       ],
       "p2": [
         "send_and_expect 发完立即读 RX 快照，无等待/超时，返回的可能不含刚发送后的响应，与 expect 语义不符",
