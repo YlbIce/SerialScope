@@ -392,7 +392,7 @@ Json NamedPipeServer::dispatchSingle(const Json& request, bool& shouldStop) {
   }
   const bool knownMethod = method == "backend.ping" || method == "backend.shutdown"
     || method == "ports.list" || method == "serial.status" || method == "serial.open" || method == "serial.close" || method == "serial.send"
-    || method == "ai.status" || method == "ai.configure" || method == "ai.parseProtocol"
+    || method == "ai.status" || method == "ai.configure" || method == "ai.parseProtocol" || method == "ai.generateCommands"
     || (method == "backend.testPayload" && testModeEnabled());
   if (!knownMethod) return isNotification ? Json() : makeError(id, -32601, "Method not found");
 
@@ -449,6 +449,21 @@ Json NamedPipeServer::callSerial(const std::string& method, const Json& params, 
     }
     return {{"header", header}, {"lengthFieldOffset", result.lengthFieldOffset},
             {"lengthFieldSize", result.lengthFieldSize}, {"fields", fields}};
+  }
+  if (method == "ai.generateCommands") {
+    if (!params.is_object() || !params.contains("text") || !params.at("text").is_string()) {
+      throw std::runtime_error("Invalid ai.generateCommands params");
+    }
+    // AiAdapter::generateCommands 内部 ensureAuthorized：未启用抛 AiError("not-enabled")。
+    const std::vector<ai::CommandSpec> commands =
+        ai_->generateCommands(params.at("text").get<std::string>());
+    Json list = Json::array();
+    for (const auto& command : commands) {
+      Json code = Json::array();
+      for (const auto byte : command.code) code.push_back(byte);
+      list.push_back({{"name", command.name}, {"code", code}, {"description", command.description}});
+    }
+    return {{"commands", list}};
   }
 
   auto result = std::make_shared<std::promise<Json>>();

@@ -57,7 +57,8 @@ const state = {
   ai: {
     enabled: false,
     allowDataUpload: false,
-    protocol: null
+    protocol: null,
+    generatedCommands: []
   }
 };
 
@@ -2101,6 +2102,7 @@ async function refreshAiStatus() {
       : 'AI 未启用';
     $('#aiEnableButton').textContent = state.ai.enabled ? 'AI 已启用' : '启用 AI';
     $('#aiParseButton').disabled = !state.ai.enabled;
+    $('#aiGenerateButton').disabled = !state.ai.enabled;
   } catch (error) {
     showToast(error.message || '无法获取 AI 状态');
   }
@@ -2196,6 +2198,78 @@ async function exportProtocolJson() {
   });
 }
 
+function codeToHex(code) {
+  if (!Array.isArray(code)) return '';
+  return code.map((b) => Number(b).toString(16).toUpperCase().padStart(2, '0')).join(' ');
+}
+
+async function generateAiCommands() {
+  const text = $('#protocolTextInput').value.trim();
+  if (!text) {
+    showToast('请先输入规约文本再生成命令');
+    return;
+  }
+  $('#aiGenerateButton').disabled = true;
+  $('#aiGenerateButton').textContent = '生成中…';
+  try {
+    const result = await window.serialScope.callBackend('ai.generateCommands', { text });
+    state.ai.generatedCommands = Array.isArray(result.commands) ? result.commands : [];
+    renderCommandResult();
+  } catch (error) {
+    showToast(error.message || '生成命令失败');
+  } finally {
+    $('#aiGenerateButton').textContent = '生成命令';
+    if (state.ai.enabled) $('#aiGenerateButton').disabled = false;
+  }
+}
+
+function renderCommandResult() {
+  const container = $('#commandGenerateResult');
+  const commands = state.ai.generatedCommands || [];
+  if (commands.length === 0) {
+    container.className = 'command-result empty';
+    container.innerHTML = '尚未生成。启用 AI 后点击“生成命令”，根据规约文本生成读写命令并加入宏库复用。';
+    return;
+  }
+  container.className = 'command-result';
+  container.innerHTML = commands.map((command, index) => `
+    <div class="command-row" data-index="${index}">
+      <div>
+        <strong>${escapeHtml(command.name || '(未命名)')}</strong>
+        <code>${escapeHtml(codeToHex(command.code))}</code>
+        ${command.description ? `<small>${escapeHtml(command.description)}</small>` : ''}
+      </div>
+      <button class="primary-button" data-add-command="${index}" type="button">加入宏库</button>
+    </div>`).join('');
+  document.querySelectorAll('#commandGenerateResult [data-add-command]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const command = commands[Number(button.dataset.addCommand)];
+      if (command) addCommandToMacros(command);
+    });
+  });
+}
+
+function addCommandToMacros(command) {
+  const data = codeToHex(command.code);
+  if (!data.trim()) {
+    showToast('命令字节为空，无法加入宏库');
+    return;
+  }
+  const macros = loadMacros();
+  const name = (command.name || 'AI 命令').trim();
+  const existing = macros.find((macro) => macro.name === name);
+  if (existing) {
+    existing.mode = 'hex';
+    existing.data = data;
+    existing.lineEnding = 'none';
+    existing.appendModbusCrc = false;
+  } else {
+    macros.push({ name, mode: 'hex', data, lineEnding: 'none', appendModbusCrc: false });
+  }
+  saveMacros(macros);
+  showToast(`命令“${name}”已加入宏库`);
+}
+
 function initAiPanel() {
   const saved = loadSavedProtocol();
   if (saved) {
@@ -2205,6 +2279,7 @@ function initAiPanel() {
   refreshAiStatus();
   $('#aiEnableButton').addEventListener('click', enableAi);
   $('#aiParseButton').addEventListener('click', parseProtocol);
+  $('#aiGenerateButton').addEventListener('click', generateAiCommands);
   $('#saveProtocolButton').addEventListener('click', () => {
     if (state.ai.protocol) renderProtocolResult();
   });

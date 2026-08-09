@@ -51,7 +51,7 @@ app.whenReady().then(async () => {
     ipcMain.handle('backend:info', () => ({ transport: 'named-pipe', backendPath }));
     ipcMain.handle('backend:start', () => ({ started: true }));
     ipcMain.handle('backend:rpc', (_event, method, params = {}) => {
-      if (!['ports.list', 'serial.status', 'ai.status', 'ai.configure', 'ai.parseProtocol'].includes(method)) throw new Error('不允许的后端 RPC 方法');
+      if (!['ports.list', 'serial.status', 'ai.status', 'ai.configure', 'ai.parseProtocol', 'ai.generateCommands'].includes(method)) throw new Error('不允许的后端 RPC 方法');
       if (!rpc) throw new Error('Named Pipe 后端未连接');
       return rpc.call(method, params);
     });
@@ -107,6 +107,27 @@ app.whenReady().then(async () => {
     await waitForRenderer(
       "JSON.parse(localStorage.getItem('serialscope.protocol'))?.fields?.[0]?.name === '命令码'",
       'protocol correction persisted to localStorage');
+
+    // 7. 命令生成按钮应在启用后可用
+    if (await rendererValue("document.querySelector('#aiGenerateButton').disabled") !== false) {
+      throw new Error('generate button should be enabled after AI enabled');
+    }
+
+    // 8. 生成命令并展示
+    await rendererValue("document.querySelector('#aiGenerateButton').click()");
+    await waitForRenderer(
+      "document.querySelectorAll('#commandGenerateResult .command-row').length === 2",
+      'command generation rendered 2 commands');
+    const firstCommandName = await rendererValue("document.querySelector('#commandGenerateResult .command-row strong').textContent");
+    if (firstCommandName !== 'ReadDeviceInfo') throw new Error(`expected first command ReadDeviceInfo, got ${firstCommandName}`);
+    const firstHex = await rendererValue("document.querySelector('#commandGenerateResult .command-row code').textContent");
+    if (firstHex !== 'AA 55 01') throw new Error(`expected code 'AA 55 01', got '${firstHex}'`);
+
+    // 9. 加入宏库并验证持久化
+    await rendererValue("document.querySelector('#commandGenerateResult [data-add-command=\"0\"]').click()");
+    await waitForRenderer(
+      "JSON.parse(localStorage.getItem('serialscope.macros'))?.some?.((macro) => macro.name === 'ReadDeviceInfo' && macro.data === 'AA 55 01')",
+      'command added to macro library');
 
     console.log('Protocol AI UI interaction passed');
     app.exit(0);

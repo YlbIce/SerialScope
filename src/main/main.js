@@ -465,7 +465,7 @@ ipcMain.on('simulator:activity', (event, activity = {}) => {
   });
 });
 
-const allowedRpcMethods = new Set(['ports.list', 'serial.status', 'serial.open', 'serial.close', 'serial.send', 'ai.status', 'ai.configure', 'ai.parseProtocol']);
+const allowedRpcMethods = new Set(['ports.list', 'serial.status', 'serial.open', 'serial.close', 'serial.send', 'ai.status', 'ai.configure', 'ai.parseProtocol', 'ai.generateCommands']);
 
 ipcMain.handle('backend:rpc', async (_event, method, params = {}) => {
   if (typeof method !== 'string' || !allowedRpcMethods.has(method)) throw new Error('不允许的后端 RPC 方法');

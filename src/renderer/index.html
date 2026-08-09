@@ -419,6 +419,15 @@
                 <div id="protocolParseResult" class="protocol-result empty">尚未解析。点击“解析规约”查看 AI 提取的帧头、长度域与字段。</div>
               </div>
             </section>
+            <section class="dock-panel">
+              <header class="dock-header">
+                <span>AI 命令生成</span>
+                <button id="aiGenerateButton" class="primary-button" type="button" disabled>生成命令</button>
+              </header>
+              <div class="dock-content">
+                <div id="commandGenerateResult" class="command-result empty">尚未生成。启用 AI 后点击“生成命令”，根据规约文本生成读写命令并加入宏库复用。</div>
+              </div>
+            </section>
           </div>
         </section>
       </main>

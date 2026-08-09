@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "add-ai-command-generation",
+  "title": "Expose ai.generateCommands and add command generation + macro reuse UI",
+  "riskTier": "L2",
+  "state": "ready-for-review",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}

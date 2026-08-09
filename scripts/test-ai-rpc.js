@@ -96,6 +96,20 @@ function handleMessage(message) {
     if (!headerMatches || r.lengthFieldOffset !== 2 || r.lengthFieldSize !== 1 || !fieldsOk) {
       throw new Error(`ai.parseProtocol mock result mismatch: ${JSON.stringify(r)}`);
     }
+    // 7. 启用后 ai.generateCommands 返回 mock 命令
+    writeMessage({ jsonrpc: '2.0', id: 'generate-ok', method: 'ai.generateCommands', params: { text: 'AA 55 LEN ...' } });
+    return;
+  }
+  if (message.id === 'generate-ok') {
+    if (message.error) throw new Error(`ai.generateCommands after enable failed: ${JSON.stringify(message.error)}`);
+    const commands = message.result?.commands;
+    if (!Array.isArray(commands) || commands.length !== 2) {
+      throw new Error(`ai.generateCommands mock result mismatch: ${JSON.stringify(message.result)}`);
+    }
+    const first = commands[0];
+    if (first.name !== 'ReadDeviceInfo' || !Array.isArray(first.code) || first.code.join(',') !== '170,85,1') {
+      throw new Error(`ai.generateCommands first command mismatch: ${JSON.stringify(first)}`);
+    }
     finish();
     return;
   }
