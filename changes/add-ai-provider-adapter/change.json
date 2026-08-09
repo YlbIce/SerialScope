@@ -3,7 +3,7 @@
   "id": "add-ai-provider-adapter",
   "title": "Add AI adapter interface with local-only mock provider to backend",
   "riskTier": "L2",
-  "state": "review-passed",
+  "state": "archived",
   "owner": "implementer",
   "reviewMode": "S",
   "archiveRequiresHumanConfirmation": true,
@@ -12,5 +12,10 @@
     "reviewRound": 1,
     "p1": 0,
     "p2": 1
+  },
+  "archive": {
+    "approvedBy": "user",
+    "approval": "选择归档已完成的 L2 变更包",
+    "proof": "changes/add-ai-provider-adapter/archive.md"
   }
 }

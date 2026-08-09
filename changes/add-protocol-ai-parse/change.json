@@ -3,7 +3,7 @@
   "id": "add-protocol-ai-parse",
   "title": "Expose ai.* IPC and add protocol parse + manual correction UI",
   "riskTier": "L2",
-  "state": "review-passed",
+  "state": "archived",
   "owner": "implementer",
   "reviewMode": "S",
   "archiveRequiresHumanConfirmation": true,
@@ -12,5 +12,10 @@
     "reviewRound": 1,
     "p1": 0,
     "p2": 2
+  },
+  "archive": {
+    "approvedBy": "user",
+    "approval": "选择归档已完成的 L2 变更包",
+    "proof": "changes/add-protocol-ai-parse/archive.md"
   }
 }
