@@ -2129,25 +2129,33 @@ function bytesToHexLabel(bytes) {
 
 async function refreshAiStatus() {
   try {
-    const status = await window.serialScope.callBackend('ai.status');
-    state.ai.enabled = Boolean(status.enabled);
-    state.ai.allowDataUpload = Boolean(status.allowDataUpload);
-    let providerLabel = status.provider || 'mock';
-    let keyInfo = '';
+    let status = {};
     try {
-      const cfg = await window.serialScope.getAiConfig();
-      providerLabel = cfg.provider || providerLabel;
-      keyInfo = cfg.hasApiKey ? `｜Key 来源 ${cfg.keySource}` : '｜无 Key（将回退 mock）';
+      status = await window.serialScope.callBackend('ai.status');
     } catch {
-      // 忽略配置读取失败，用后端状态
+      status = {};
     }
+    // 真实 provider 配置在 Main 侧（ai:config），优先用其判断 enabled/provider/upload，显示与调用分发一致。
+    let cfg = null;
+    try {
+      cfg = await window.serialScope.getAiConfig();
+    } catch {
+      cfg = null;
+    }
+    const providerLabel = cfg?.provider || status.provider || 'mock';
+    // enabled：Main 侧 ai:config 或后端 ai.status 任一启用即视为启用（两套状态可能来自不同配置入口）。
+    const enabled = Boolean(cfg?.enabled || status.enabled);
+    const allowDataUpload = Boolean(cfg?.allowDataUpload || status.allowDataUpload);
+    state.ai.enabled = enabled;
+    state.ai.allowDataUpload = allowDataUpload;
+    const keyInfo = cfg ? (cfg.hasApiKey ? `｜Key 来源 ${cfg.keySource}` : '｜无 Key（将回退 mock）') : '';
     const label = $('#aiStatusLabel');
-    label.textContent = state.ai.enabled
-      ? `AI 已启用（provider: ${providerLabel}，上传: ${state.ai.allowDataUpload ? '允许' : '禁止'}${keyInfo}）`
+    label.textContent = enabled
+      ? `AI 已启用（provider: ${providerLabel}，上传: ${allowDataUpload ? '允许' : '禁止'}${keyInfo}）`
       : 'AI 未启用';
-    $('#aiEnableButton').textContent = state.ai.enabled ? 'AI 已启用' : '启用 AI';
-    $('#aiParseButton').disabled = !state.ai.enabled;
-    $('#aiGenerateButton').disabled = !state.ai.enabled;
+    $('#aiEnableButton').textContent = enabled ? 'AI 已启用' : '启用 AI';
+    $('#aiParseButton').disabled = !enabled;
+    $('#aiGenerateButton').disabled = !enabled;
   } catch (error) {
     showToast(error.message || '无法获取 AI 状态');
   }
@@ -2334,26 +2342,55 @@ async function importProtocolDocument() {
 async function openAiConfig() {
   try {
     const snapshot = await window.serialScope.getAiConfig();
-    const provider = window.prompt('AI Provider（mock / deepseek）：', snapshot.provider || 'mock');
-    if (provider === null) return;
-    const providerVal = provider.trim() === 'deepseek' ? 'deepseek' : 'mock';
-    const enabledText = window.prompt('启用 AI（true/false）：', String(snapshot.enabled));
-    if (enabledText === null) return;
-    const enabled = enabledText.trim().toLowerCase() === 'true';
-    const uploadText = window.prompt('允许数据上传到 DeepSeek（true/false，⚠️ 开启后规约文本与串口数据将发送到云端）：', String(snapshot.allowDataUpload));
-    if (uploadText === null) return;
-    const allowDataUpload = uploadText.trim().toLowerCase() === 'true';
-    const serialText = window.prompt('AI 解析时包含最近串口 RX 数据（true/false）：', String(state.ai.includeSerialData || false));
-    if (serialText === null) return;
-    state.ai.includeSerialData = serialText.trim().toLowerCase() === 'true';
-    const apiKey = window.prompt('DeepSeek API Key（可留空，用环境变量 DEEPSEEK_API_KEY）：', '');
-    const updates = { provider: providerVal, enabled, allowDataUpload };
-    if (apiKey && apiKey.trim()) updates.apiKey = apiKey.trim();
-    const result = await window.serialScope.configureAi(updates);
-    showToast(`AI 配置已保存：${result.provider}｜启用=${result.enabled}｜上传=${result.allowDataUpload}｜Key=${result.hasApiKey ? '有' : '无'}（来源 ${result.keySource}）`);
+    $('#aiApiKeyInput').value = '';
+    $('#aiIncludeSerialCheck').checked = Boolean(state.ai.includeSerialData);
+    $('#aiTestResult').textContent = '';
+    $('#aiTestResult').className = 'ai-test-result';
+    $('#aiConfigModal').hidden = false;
+  } catch (error) {
+    showToast(error.message || '打开 AI 配置失败');
+  }
+}
+
+function closeAiConfig() {
+  $('#aiConfigModal').hidden = true;
+}
+
+async function testAiConnection() {
+  const resultEl = $('#aiTestResult');
+  resultEl.textContent = '测试中…';
+  resultEl.className = 'ai-test-result testing';
+  try {
+    const result = await window.serialScope.testAiConnection();
+    resultEl.textContent = `✅ 连接成功：${(result.reply || '').slice(0, 80)}`;
+    resultEl.className = 'ai-test-result ok';
+  } catch (error) {
+    resultEl.textContent = `❌ 连接失败：${error.message || '未知错误'}`;
+    resultEl.className = 'ai-test-result fail';
+  }
+}
+
+async function saveAiConfig() {
+  const apiKey = $('#aiApiKeyInput').value.trim();
+  const includeSerial = $('#aiIncludeSerialCheck').checked;
+  if (!apiKey) {
+    showToast('请填写 DeepSeek API Key');
+    return;
+  }
+  state.ai.includeSerialData = includeSerial;
+  try {
+    // 用户只提供 Key，其余用 DeepSeek 固定配置（provider=deepseek、enabled、允许上传）。
+    const result = await window.serialScope.configureAi({
+      provider: 'deepseek',
+      enabled: true,
+      allowDataUpload: true,
+      apiKey
+    });
+    showToast(`DeepSeek 已配置并启用（Key 来源 ${result.keySource}）`);
+    closeAiConfig();
     await refreshAiStatus();
   } catch (error) {
-    showToast(error.message || '配置 AI 失败');
+    showToast(error.message || '保存 DeepSeek 配置失败');
   }
 }
 
@@ -2372,6 +2409,10 @@ function initAiPanel() {
   $('#saveProtocolButton').addEventListener('click', () => {
     if (state.ai.protocol) renderProtocolResult();
   });
+  $('#testAiConnectionButton').addEventListener('click', testAiConnection);
+  $('#saveAiConfigButton').addEventListener('click', saveAiConfig);
+  $('#cancelAiConfigButton').addEventListener('click', closeAiConfig);
+  $('#closeAiConfigModalButton').addEventListener('click', closeAiConfig);
 }
 
 async function openSerialConfiguration() {

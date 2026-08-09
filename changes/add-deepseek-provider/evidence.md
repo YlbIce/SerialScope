@@ -23,10 +23,17 @@
       "doesNotProve": "真实 DeepSeek 网络调用"
     },
     {
+      "command": "npm run test:protocol-ai-ui（AI 配置 modal）",
+      "kind": "ui-test",
+      "status": "passed",
+      "purpose": "验证 AI 配置 modal：打开、填 Key、测试连接（testConnection 成功）、保存（自动设 provider=deepseek/enabled/upload）",
+      "doesNotProve": "真实 DeepSeek 网络调用"
+    },
+    {
       "command": "npm run test:deepseek（设 DEEPSEEK_API_KEY 后）",
       "kind": "integration-test",
       "status": "not-run",
-      "purpose": "验证真实 DeepSeek parseProtocol/generateCommands 端到端",
+      "purpose": "验证真实 DeepSeek testConnection/parseProtocol/generateCommands 端到端",
       "doesNotProve": "模型输出质量",
       "reason": "需用户在本机设 DEEPSEEK_API_KEY 环境变量运行；当前会话未设，无法在此验证"
     },

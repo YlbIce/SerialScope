@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('serialScope', {
   importProtocolFile: () => ipcRenderer.invoke('file:importProtocol'),
   getAiConfig: () => ipcRenderer.invoke('ai:config'),
   configureAi: (updates) => ipcRenderer.invoke('ai:config', updates),
+  testAiConnection: () => ipcRenderer.invoke('ai:test'),
   startMcpServer: () => ipcRenderer.invoke('mcp:start'),
   stopMcpServer: () => ipcRenderer.invoke('mcp:stop'),
   getMcpStatus: () => ipcRenderer.invoke('mcp:status'),

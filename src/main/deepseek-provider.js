@@ -6,9 +6,11 @@ const DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions';
 const DEEPSEEK_MODEL = 'deepseek-chat';
 const DEFAULT_TIMEOUT_MS = 30000;
 
-function callChatCompletions({ apiKey, messages, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+function callChatCompletions({ apiKey, messages, timeoutMs = DEFAULT_TIMEOUT_MS, maxTokens }) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ model: DEEPSEEK_MODEL, messages, temperature: 0.2, stream: false });
+    const payload = { model: DEEPSEEK_MODEL, messages, temperature: 0.2, stream: false };
+    if (Number.isInteger(maxTokens) && maxTokens > 0) payload.max_tokens = maxTokens;
+    const body = JSON.stringify(payload);
     const url = new URL(DEEPSEEK_URL);
     const request = https.request(url, {
       method: 'POST',
@@ -101,4 +103,17 @@ async function generateCommandsWithDeepSeek({ apiKey, text, includeSerialData, r
   return Array.isArray(json) ? json : (json.commands || []);
 }
 
-module.exports = { parseProtocolWithDeepSeek, generateCommandsWithDeepSeek, getApiKey };
+// 测试连接：用极小请求验证 Key 有效且能连到 DeepSeek。
+async function testConnection({ apiKey }) {
+  const key = getApiKey(apiKey);
+  if (!key) throw Object.assign(new Error('未配置 DeepSeek API Key'), { code: 'no-api-key' });
+  const reply = await callChatCompletions({
+    apiKey: key,
+    messages: [{ role: 'user', content: 'ping' }],
+    timeoutMs: 15000,
+    maxTokens: 5
+  });
+  return { ok: true, reply: (reply || '').slice(0, 200) };
+}
+
+module.exports = { parseProtocolWithDeepSeek, generateCommandsWithDeepSeek, testConnection, getApiKey };

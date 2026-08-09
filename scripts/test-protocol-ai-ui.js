@@ -58,6 +58,17 @@ app.whenReady().then(async () => {
     ipcMain.handle('file:saveText', () => ({ canceled: true }));
     ipcMain.handle('file:openJson', () => ({ canceled: true }));
     ipcMain.handle('file:importProtocol', () => ({ ok: true, canceled: false, text: '帧头 0xAA 0x55；长度域 1 字节（从文档导入）' }));
+    const aiState = { provider: 'mock', enabled: false, allowDataUpload: false, hasApiKey: false, keySource: 'none' };
+    ipcMain.handle('ai:config', (_event, updates) => {
+      if (updates && typeof updates === 'object') {
+        if (updates.provider) aiState.provider = updates.provider;
+        if (typeof updates.enabled === 'boolean') aiState.enabled = updates.enabled;
+        if (typeof updates.allowDataUpload === 'boolean') aiState.allowDataUpload = updates.allowDataUpload;
+        if (updates.apiKey) { aiState.hasApiKey = true; aiState.keySource = 'runtime'; }
+      }
+      return { ...aiState };
+    });
+    ipcMain.handle('ai:test', () => ({ ok: true, reply: 'pong (mock)' }));
 
     window = new BrowserWindow({
       width: 1200, height: 800, show: false,
@@ -135,6 +146,20 @@ app.whenReady().then(async () => {
     await waitForRenderer(
       "JSON.parse(localStorage.getItem('serialscope.macros'))?.some?.((macro) => macro.name === 'ReadDeviceInfo' && macro.data === 'AA 55 01')",
       'command added to macro library');
+
+    // 10. AI 配置 modal：打开、填 Key、测试连接、保存
+    await rendererValue("document.querySelector('#aiConfigButton').click()");
+    await waitForRenderer("!document.querySelector('#aiConfigModal').hidden", 'AI config modal opened');
+    await rendererValue(`(() => {
+      document.querySelector('#aiApiKeyInput').value = 'sk-test-key';
+      document.querySelector('#aiIncludeSerialCheck').checked = true;
+    })()`);
+    await rendererValue("document.querySelector('#testAiConnectionButton').click()");
+    await waitForRenderer(
+      "document.querySelector('#aiTestResult').textContent.includes('连接成功')",
+      'AI test connection shows success');
+    await rendererValue("document.querySelector('#saveAiConfigButton').click()");
+    await waitForRenderer("document.querySelector('#aiConfigModal').hidden", 'AI config modal closed after save');
 
     console.log('Protocol AI UI interaction passed');
     app.exit(0);

@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { AiConfig } = require('../src/main/ai-config');
-const { parseProtocolWithDeepSeek, generateCommandsWithDeepSeek } = require('../src/main/deepseek-provider');
+const { parseProtocolWithDeepSeek, generateCommandsWithDeepSeek, testConnection } = require('../src/main/deepseek-provider');
 
 function check(condition, message) {
   if (!condition) throw new Error(message);
@@ -52,9 +52,20 @@ async function main() {
     }
     check(noKey, '无 Key 时 parseProtocolWithDeepSeek 抛 no-api-key');
 
+    // 4.5 testConnection 无 Key 抛 no-api-key
+    let testNoKey = false;
+    try {
+      await testConnection({ apiKey: '' });
+    } catch (e) {
+      testNoKey = e.code === 'no-api-key' || (e.message && e.message.includes('未配置'));
+    }
+    check(testNoKey, 'testConnection 无 Key 抛 no-api-key');
+
     // 5. 真实调用（需 DEEPSEEK_API_KEY 环境变量）
     if (process.env.DEEPSEEK_API_KEY) {
       console.log('检测到 DEEPSEEK_API_KEY，尝试真实调用…');
+      const conn = await testConnection({ apiKey: '' });
+      check(conn && conn.ok === true, 'DeepSeek 真实连接测试通过');
       const parsed = await parseProtocolWithDeepSeek({
         apiKey: '',
         text: '帧头 0xAA 0x55，长度域 1 字节，之后命令码与数据',

@@ -436,6 +436,43 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <div id="aiConfigModal" class="modal-backdrop" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="aiConfigModalTitle">
+        <header class="modal-header">
+          <div>
+            <p class="eyebrow">DeepSeek AI 接入</p>
+            <h3 id="aiConfigModalTitle">DeepSeek 配置</h3>
+          </div>
+          <button id="closeAiConfigModalButton" class="icon-button" type="button" aria-label="关闭 AI 配置">×</button>
+        </header>
+
+        <div class="rule-help">
+          <strong>使用说明</strong>
+          <p>只需填写 DeepSeek API Key。保存后系统使用 DeepSeek 固定配置（模型 deepseek-chat），AI 规约解析/命令生成将调用真实模型。</p>
+          <p><strong>⚠️ 数据上传：</strong>启用后，规约文本与（若开启的）串口接收数据将发送到 DeepSeek 云端。请确认你接受该数据外泄。</p>
+          <p>也可以不在此填写，改用本机环境变量 <code>DEEPSEEK_API_KEY</code>。</p>
+        </div>
+
+        <div class="form-stack">
+          <label>
+            <span>DeepSeek API Key</span>
+            <input id="aiApiKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..." />
+          </label>
+          <label class="check-label">
+            <input id="aiIncludeSerialCheck" type="checkbox" /> AI 解析时包含最近串口 RX 数据
+          </label>
+          <div id="aiTestResult" class="ai-test-result"></div>
+        </div>
+
+        <footer class="modal-actions">
+          <button id="testAiConnectionButton" type="button">测试连接</button>
+          <span class="modal-spacer"></span>
+          <button id="cancelAiConfigButton" type="button">取消</button>
+          <button id="saveAiConfigButton" class="primary-button" type="button">保存</button>
+        </footer>
+      </section>
+    </div>
+
     <div id="ruleModal" class="modal-backdrop" hidden>
       <section class="modal" role="dialog" aria-modal="true" aria-labelledby="ruleModalTitle">
         <header class="modal-header">

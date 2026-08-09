@@ -10,7 +10,7 @@ const { findRegisteredVirtualSimulatorPort } = require('./virtual-simulator-port
 const { McpBridge } = require('./mcp-bridge');
 const { extractProtocolText } = require('./protocol-import');
 const { AiConfig } = require('./ai-config');
-const { parseProtocolWithDeepSeek, generateCommandsWithDeepSeek } = require('./deepseek-provider');
+const { parseProtocolWithDeepSeek, generateCommandsWithDeepSeek, testConnection } = require('./deepseek-provider');
 
 // 串口工具的核心功能不依赖 GPU。部分 Windows 环境缺少 Chromium GPU
 // 子进程所需运行库时，强制软件渲染可避免应用在创建窗口前直接退出。
@@ -525,6 +525,14 @@ ipcMain.handle('ai:config', async (_event, updates) => {
     return config.configure(updates);
   }
   return config.getSnapshot();
+});
+
+// 测试 DeepSeek 连接：用当前 Key 发极小请求验证连通性。
+ipcMain.handle('ai:test', async () => {
+  const config = ensureAiConfig();
+  const apiKey = config.getApiKey();
+  if (!apiKey) throw new Error('未配置 DeepSeek API Key，请先填写或设置环境变量 DEEPSEEK_API_KEY');
+  return testConnection({ apiKey });
 });
 
 // ---- MCP Server 管理 ----
