@@ -9,19 +9,19 @@
   "archiveRequiresHumanConfirmation": true,
   "review": {
     "result": "conditionally-approved",
-    "reviewRound": 2,
+    "reviewRound": 3,
     "p1": 1,
     "p2": 2,
     "stage": "G3-implementation",
     "p1Resolved": true,
-    "p2Resolved": false,
+    "p2Resolved": true,
     "g3": {
       "p1": [
         "MCP open_connection/configure_connection 复用全局 serial.open，会抢占/替换 Electron 主界面当前串口会话；已通过 _ensureNotStealingSession 修复：当前会话已打开不同端口时 MCP 拒绝（-32003），同端口或空闲时放行"
       ],
       "p2": [
-        "send_and_expect 发完立即读 RX 快照，无等待/超时，返回的可能不含刚发送后的响应，与 expect 语义不符",
-        "read_data/send_and_expect 的 RX 缓冲无端口隔离（全局缓冲），多端口操作时语义混乱"
+        "send_and_expect 发完立即读 RX 快照，无等待/超时；已通过 _waitForNewRx 修复：发送后等待新 RX 帧到达或超时",
+        "read_data/send_and_expect 的 RX 缓冲无端口隔离；已修复：open 后记录 currentPort，read_data 指定不匹配端口返回空"
       ]
     }
   }

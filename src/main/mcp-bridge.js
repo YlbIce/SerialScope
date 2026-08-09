@@ -14,6 +14,7 @@ class McpBridge {
     this.running = false;
     this.rxBuffer = [];
     this.rxBufferMax = 200;
+    this.currentPort = null;
     this._loadConfig();
   }
 
@@ -139,13 +140,18 @@ class McpBridge {
         return this._call('ports.list', {});
       case 'serial.status':
         return this._call('serial.status', {});
-      case 'read_data':
+      case 'read_data': {
+        // P2：若指定 port 且与当前会话端口不一致，返回空（端口隔离）。
+        if (params.port && this.currentPort && params.port !== this.currentPort) {
+          return { frames: [] };
+        }
         return { frames: this.getRxFrames(params.count) };
+      }
       case 'open_connection': {
         this._requireAllowedPort(params.port);
         // P1 会话隔离：若主界面当前已打开不同端口，MCP 不得抢占。
         await this._ensureNotStealingSession(params.port);
-        return this._call('serial.open', {
+        const result = await this._call('serial.open', {
           portName: params.port,
           baudRate: params.baudRate ?? 9600,
           dataBits: params.dataBits ?? 8,
@@ -153,6 +159,8 @@ class McpBridge {
           parity: params.parity ?? 'none',
           flowControl: 'none'
         });
+        this.currentPort = params.port;
+        return result;
       }
       case 'send_data': {
         this._requireAllowedPort(params.port);
@@ -161,15 +169,18 @@ class McpBridge {
       }
       case 'send_and_expect': {
         this._requireAllowedPort(params.port);
+        // P2：发送后等待新 RX 帧到达（或超时），返回新增帧。
+        const before = this.rxBuffer.length;
         const payload = this._toPayload(params);
-        this._call('serial.send', payload);
-        return { frames: this.getRxFrames(10) };
+        await this._call('serial.send', payload);
+        const frames = await this._waitForNewRx(before, params.timeoutMs ?? 1000);
+        return { frames };
       }
       case 'configure_connection': {
         this._requireAllowedPort(params.port);
         // P1 会话隔离：configure 只能作用于当前已打开的同一端口，不能改/抢占其他端口会话。
         await this._ensureNotStealingSession(params.port);
-        return this._call('serial.open', {
+        const result = await this._call('serial.open', {
           portName: params.port,
           baudRate: params.baudRate ?? 9600,
           dataBits: params.dataBits ?? 8,
@@ -177,6 +188,8 @@ class McpBridge {
           parity: params.parity ?? 'none',
           flowControl: 'none'
         });
+        this.currentPort = params.port;
+        return result;
       }
       default: {
         const err = new Error(`未知工具: ${tool}`);
@@ -194,6 +207,18 @@ class McpBridge {
       err.mcpCode = -32003;
       throw err;
     }
+  }
+
+  // P2：等待自 offset 起出现新 RX 帧（轮询 rxBuffer 长度），或超时返回已累积的新帧。
+  async _waitForNewRx(offset, timeoutMs) {
+    const deadline = Date.now() + Math.max(0, Number(timeoutMs) || 1000);
+    while (Date.now() < deadline) {
+      if (this.rxBuffer.length > offset) {
+        return this.rxBuffer.slice(offset);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    return this.rxBuffer.slice(offset);
   }
 
   _toPayload(params) {

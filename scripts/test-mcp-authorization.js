@@ -113,6 +113,35 @@ async function main() {
     bridgeCfg.setAllowedPorts(['COM10', 'COM20']);
     await expectRejected(bridgeCfg, 'configure_connection', { port: 'COM10', baudRate: 9600 }, -32003, 'MCP configure steal session');
 
+    // ---- P2 ----
+    // 场景 7：open 后 currentPort 记录，read_data 指定同端口返回快照
+    const rpcP2 = mockRpc({ isOpen: false, portName: '' });
+    const bridgeP2 = new McpBridge({ backendRpc: rpcP2, allowedRpcMethods: allowedFull, userDataPath: userData });
+    bridgeP2.setAllowedPorts(['COM10']);
+    await callTool(bridgeP2, 'open_connection', { port: 'COM10', baudRate: 9600 });
+    if (bridgeP2.currentPort !== 'COM10') throw new Error(`currentPort should be COM10, got ${bridgeP2.currentPort}`);
+    bridgeP2.appendRxFrame({ hex: 'AA 55', text: '..' });
+    const samePortFrames = await callTool(bridgeP2, 'read_data', { count: 10, port: 'COM10' });
+    if (samePortFrames.frames.length !== 1) throw new Error('read_data same port should return frames');
+
+    // 场景 8：read_data 指定不匹配端口返回空（端口隔离）
+    const otherPortFrames = await callTool(bridgeP2, 'read_data', { count: 10, port: 'COM20' });
+    if (!Array.isArray(otherPortFrames.frames) || otherPortFrames.frames.length !== 0) {
+      throw new Error('read_data mismatched port should return empty');
+    }
+
+    // 场景 9：send_and_expect 等待新 RX（发送后异步 append，应返回新增帧）
+    const rpcExpect = mockRpc({ isOpen: true, portName: 'COM10' });
+    const bridgeExpect = new McpBridge({ backendRpc: rpcExpect, allowedRpcMethods: allowedFull, userDataPath: userData });
+    bridgeExpect.setAllowedPorts(['COM10']);
+    bridgeExpect.appendRxFrame({ hex: 'OLD', text: '..' });
+    // 发送后 60ms 追加新 RX
+    setTimeout(() => bridgeExpect.appendRxFrame({ hex: 'NEW', text: '..' }), 60);
+    const expectResult = await callTool(bridgeExpect, 'send_and_expect', { port: 'COM10', hex: 'AA', timeoutMs: 1000 });
+    if (!Array.isArray(expectResult.frames) || expectResult.frames.length !== 1 || expectResult.frames[0].hex !== 'NEW') {
+      throw new Error(`send_and_expect should return new RX frames, got ${JSON.stringify(expectResult)}`);
+    }
+
     console.log('MCP authorization passed');
   } finally {
     try { fs.rmSync(userData, { recursive: true, force: true }); } catch {}
