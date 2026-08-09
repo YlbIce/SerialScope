@@ -527,12 +527,12 @@ ipcMain.handle('ai:config', async (_event, updates) => {
   return config.getSnapshot();
 });
 
-// 测试 DeepSeek 连接：用当前 Key 发极小请求验证连通性。
-ipcMain.handle('ai:test', async () => {
+// 测试 DeepSeek 连接：优先用传入的临时 Key（输入框未保存），否则用已配置 Key/环境变量。
+ipcMain.handle('ai:test', async (_event, { apiKey } = {}) => {
   const config = ensureAiConfig();
-  const apiKey = config.getApiKey();
-  if (!apiKey) throw new Error('未配置 DeepSeek API Key，请先填写或设置环境变量 DEEPSEEK_API_KEY');
-  return testConnection({ apiKey });
+  const candidate = (typeof apiKey === 'string' && apiKey.trim()) ? apiKey.trim() : config.getApiKey();
+  if (!candidate) throw new Error('未配置 DeepSeek API Key，请先填写或设置环境变量 DEEPSEEK_API_KEY');
+  return testConnection({ apiKey: candidate });
 });
 
 // ---- MCP Server 管理 ----

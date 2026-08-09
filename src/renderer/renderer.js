@@ -2376,8 +2376,10 @@ async function testAiConnection() {
   const resultEl = $('#aiTestResult');
   resultEl.textContent = '测试中…';
   resultEl.className = 'ai-test-result testing';
+  // 用输入框里的 Key 测试（无需先保存），未填则回退环境变量。
+  const apiKey = $('#aiApiKeyInput').value.trim();
   try {
-    const result = await window.serialScope.testAiConnection();
+    const result = await window.serialScope.testAiConnection(apiKey);
     resultEl.textContent = `✅ 连接成功：${(result.reply || '').slice(0, 80)}`;
     resultEl.className = 'ai-test-result ok';
   } catch (error) {
