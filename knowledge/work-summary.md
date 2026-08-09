@@ -16,6 +16,14 @@
 
 ## 条目
 
+## 2026-08-09 · L2 · 命令生成自动保存到宏库（功能增强）
+
+- 需求来源：用户要求"命令生成时保存"。
+- 实现：`generateAiCommands` 生成后自动调用 `saveGeneratedCommandsToMacros` 把命令批量保存到宏库（含 toast 提示），无需逐条手动点击"加入宏库"；`addCommandToMacros` 复用批量保存（按名覆盖，幂等）。
+- 验证：`npm run test:protocol-ai-ui` passed（生成后自动保存 + 手动加入幂等）；`npm run check`、`npm run process:check`（22 个活动 change）passed。
+- 风险与后续：无新增依赖；属 add-ai-command-generation 功能迭代（该包已 review-passed），不新建变更包。
+- 关联：提交 `df66785`，推送 `origin/master`。
+
 ## 2026-08-09 · L3 · add-deepseek-provider 配置窗口 + 测试连接（ready-for-review，未归档）
 
 - 需求来源：用户要求应用内配置 DeepSeek API Key、配完有"测试连接"确认配置生效、其他用 DeepSeek 固定配置（用户只提供 Key）。
