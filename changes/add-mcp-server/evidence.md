@@ -64,8 +64,19 @@
   ],
   "handoff": {
     "state": "ready-for-review",
-    "reviewStage": "G3",
-    "request": "G3 独立审核：核对 MCP stdio 协议、端口白名单授权、Main 转发复用门面、read_data 快照、COM10/COM11 blocked 边界"
+    "reviewStage": "G3-implementation",
+    "reviewResult": "conditionally-approved",
+    "reviewRound": 2,
+    "p1": 1,
+    "p2": 2,
+    "p1Notes": [
+      "MCP open_connection/configure_connection 复用全局 serial.open，会抢占/替换 Electron 主界面当前串口会话；L3 安全边界下 MCP 打开端口可能干扰主会话，缺乏会话隔离，须约束后进入真实设备/归档"
+    ],
+    "p2Notes": [
+      "send_and_expect 发完立即读 RX 快照，无等待/超时，与 expect 语义不符",
+      "read_data/send_and_expect 的 RX 缓冲无端口隔离（全局缓冲）"
+    ],
+    "request": "实施者须先解决 P1（MCP 会话隔离）后进入下一阶段；COM10/COM11 端到端仍 blocked；真实设备未授权，不得归档"
   }
 }
 ```
