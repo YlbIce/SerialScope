@@ -16,6 +16,17 @@
 
 ## 条目
 
+## 2026-08-09 · L3 · review · add-mcp-server G3（conditionally-approved，P1=1/P2=2，未归档）
+
+- 需求来源：用户要求对第 6 步 MCP Server 做 G3 独立审核。
+- 方式：逐行核对 `mcp-server.js`（stdio 协议）与 `mcp-bridge.js`（转发/授权）；重跑握手与授权测试。
+- 结论：`conditionally-approved`（P1=1/P2=2）。
+  - **P1**：`open_connection`/`configure_connection` 复用全局 `serial.open`，会抢占/替换 Electron 主界面当前串口会话（SerialSession 单例），缺乏会话隔离。L3 安全边界下 MCP 打开端口可能干扰主会话，须约束后进入真实设备/归档。
+  - **P2**：`send_and_expect` 发完立即读 RX 快照无等待，与 expect 语义不符；`read_data`/`send_and_expect` 的 RX 缓冲无端口隔离（全局缓冲）。
+- 已核验：MCP stdio 协议正确、端口白名单强制（-32002）、方法白名单复用（-32001）、MCP 子进程无独立后端凭据、read_data 快照、白名单持久化；COM10/COM11 端到端仍 blocked。
+- 风险与后续：P1 需实施者解决会话隔离；真实设备未授权；不得归档。本地提交 `5fbd67b` 已完成，**推送 blocked**：连不上 github.com（网络问题），待恢复后 `git push origin master`。
+- 关联：`changes/add-mcp-server/`；本地提交 `5fbd67b`。
+
 ## 2026-08-09 · L3 · add-mcp-server（G3 ready-for-review，COM10/COM11 blocked，未归档）
 
 - 需求来源：用户要求第 6 步实现 MCP Server（G1 决策：stdio 传输 + 端口白名单授权 + 默认关闭 + read_data 快照 + COM10/COM11 验证）。
