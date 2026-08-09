@@ -16,6 +16,17 @@
 
 ## 条目
 
+## 2026-08-09 · L2 · review · add-ai-provider-adapter / add-protocol-ai-parse（review-passed，未归档）
+
+- 需求来源：用户要求对第 3、4 步两个 L2 变更包做独立只读审核。
+- 方式：逐行核对 `AiAdapter` 门面与 `NamedPipeServer` ai.* 分发、main 白名单、前端校正 UI；重跑 `test-ai-rpc` 与 `test-protocol-ai-ui` 独立复现 evidence。
+- 结论：均 `conditionally-approved`（P1=0）。
+  - add-ai-provider-adapter P2=1：`ai.configure` 允许设置 `allowDataUpload=true`，接入真实需上传 provider 前须升级 L3 显式授权。
+  - add-protocol-ai-parse P2=2：`ai.configure` 的 bool 强转报错不崩（建议明确校验）；校正 UI 仅自动化验证、mock 价值有限。
+- 已核验：AiAdapter 门面强制授权无绕过；ai.* IPC 经门面、AiError 映射 JSON-RPC error、三层防线（main 白名单+knownMethod+门面）；前端 escapeHtml 防 XSS。
+- 风险与后续：两包 `review-passed`，**不得自动归档**（AGENTS.md 要求人工确认）。推送已恢复，`origin/master` 同步至 `99944b6`。
+- 关联：`changes/add-ai-provider-adapter/`、`changes/add-protocol-ai-parse/`；提交 `99944b6`。
+
 ## 2026-08-09 · L2 · add-protocol-ai-parse（ready-for-review，推送待恢复，未归档）
 
 - 需求来源：用户要求继续第 4 步，规约文本→结构化配置 + 人工校正 UI。
