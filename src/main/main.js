@@ -9,6 +9,8 @@ const { createWorkbenchExecutionAuthorizer } = require('./workbench-execution');
 const { findRegisteredVirtualSimulatorPort } = require('./virtual-simulator-port');
 const { McpBridge } = require('./mcp-bridge');
 const { extractProtocolText } = require('./protocol-import');
+const { AiConfig } = require('./ai-config');
+const { parseProtocolWithDeepSeek, generateCommandsWithDeepSeek } = require('./deepseek-provider');
 
 // 串口工具的核心功能不依赖 GPU。部分 Windows 环境缺少 Chromium GPU
 // 子进程所需运行库时，强制软件渲染可避免应用在创建窗口前直接退出。
@@ -31,6 +33,7 @@ const startupSimulatorConfig = (() => {
 let backendProcess = null;
 let backendRpc = null;
 let mcpBridge = null;
+let aiConfig = null;
 let simulatorInstance = null;
 let isQuitting = false;
 const simulatorReadyTimeoutMs = 30000;
@@ -487,7 +490,41 @@ ipcMain.handle('backend:rpc', async (_event, method, params = {}) => {
   if (method === 'serial.send' && moduleForWebContents(_event.sender) === 'workbench') {
     await workbenchExecution.validateSend(_event.sender.id);
   }
+  // G2 P2：真实 DeepSeek provider 在 Main 侧分发（有 Key + enabled + allowDataUpload 才调 DeepSeek）。
+  if ((method === 'ai.parseProtocol' || method === 'ai.generateCommands') && ensureAiConfig().useDeepSeek()) {
+    if (!ensureAiConfig().allowDataUpload) throw new Error('[data-upload-denied] 允许数据上传后才能调用真实 provider');
+    const includeSerialData = Boolean(params.includeSerialData);
+    const rxFrames = includeSerialData && mcpBridge ? mcpBridge.getRxFrames(50) : [];
+    const apiKey = ensureAiConfig().getApiKey();
+    if (method === 'ai.parseProtocol') {
+      if (!params.text || typeof params.text !== 'string') throw new Error('Invalid ai.parseProtocol params');
+      const result = await parseProtocolWithDeepSeek({ apiKey, text: params.text, includeSerialData, rxFrames });
+      return {
+        header: Array.isArray(result.frame_format?.header) ? result.frame_format.header : [],
+        lengthFieldOffset: result.frame_format?.length_field?.offset ?? 0,
+        lengthFieldSize: result.frame_format?.length_field?.size ?? 0,
+        fields: Array.isArray(result.fields) ? result.fields : [],
+        source: 'deepseek'
+      };
+    }
+    if (!params.text || typeof params.text !== 'string') throw new Error('Invalid ai.generateCommands params');
+    const commands = await generateCommandsWithDeepSeek({ apiKey, text: params.text, includeSerialData, rxFrames });
+    return { commands, source: 'deepseek' };
+  }
   return backendRpc.call(method, params);
+});
+
+function ensureAiConfig() {
+  if (!aiConfig) aiConfig = new AiConfig(app.getPath('userData'));
+  return aiConfig;
+}
+
+ipcMain.handle('ai:config', async (_event, updates) => {
+  const config = ensureAiConfig();
+  if (updates && typeof updates === 'object') {
+    return config.configure(updates);
+  }
+  return config.getSnapshot();
 });
 
 // ---- MCP Server 管理 ----

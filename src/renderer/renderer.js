@@ -57,6 +57,7 @@ const state = {
   ai: {
     enabled: false,
     allowDataUpload: false,
+    includeSerialData: false,
     protocol: null,
     generatedCommands: []
   }
@@ -2131,9 +2132,18 @@ async function refreshAiStatus() {
     const status = await window.serialScope.callBackend('ai.status');
     state.ai.enabled = Boolean(status.enabled);
     state.ai.allowDataUpload = Boolean(status.allowDataUpload);
+    let providerLabel = status.provider || 'mock';
+    let keyInfo = '';
+    try {
+      const cfg = await window.serialScope.getAiConfig();
+      providerLabel = cfg.provider || providerLabel;
+      keyInfo = cfg.hasApiKey ? `｜Key 来源 ${cfg.keySource}` : '｜无 Key（将回退 mock）';
+    } catch {
+      // 忽略配置读取失败，用后端状态
+    }
     const label = $('#aiStatusLabel');
     label.textContent = state.ai.enabled
-      ? `AI 已启用（provider: ${status.provider || 'mock'}，上传: ${state.ai.allowDataUpload ? '允许' : '禁止'}）`
+      ? `AI 已启用（provider: ${providerLabel}，上传: ${state.ai.allowDataUpload ? '允许' : '禁止'}${keyInfo}）`
       : 'AI 未启用';
     $('#aiEnableButton').textContent = state.ai.enabled ? 'AI 已启用' : '启用 AI';
     $('#aiParseButton').disabled = !state.ai.enabled;
@@ -2163,12 +2173,13 @@ async function parseProtocol() {
   $('#aiParseButton').disabled = true;
   $('#aiParseButton').textContent = '解析中…';
   try {
-    const result = await window.serialScope.callBackend('ai.parseProtocol', { text });
+    const result = await window.serialScope.callBackend('ai.parseProtocol', { text, includeSerialData: state.ai.includeSerialData });
     state.ai.protocol = {
       header: Array.isArray(result.header) ? result.header : [],
       lengthFieldOffset: result.lengthFieldOffset ?? 0,
       lengthFieldSize: result.lengthFieldSize ?? 0,
-      fields: Array.isArray(result.fields) ? result.fields : []
+      fields: Array.isArray(result.fields) ? result.fields : [],
+      source: result.source || 'mock'
     };
     renderProtocolResult();
   } catch (error) {
@@ -2247,8 +2258,9 @@ async function generateAiCommands() {
   $('#aiGenerateButton').disabled = true;
   $('#aiGenerateButton').textContent = '生成中…';
   try {
-    const result = await window.serialScope.callBackend('ai.generateCommands', { text });
+    const result = await window.serialScope.callBackend('ai.generateCommands', { text, includeSerialData: state.ai.includeSerialData });
     state.ai.generatedCommands = Array.isArray(result.commands) ? result.commands : [];
+    state.ai.commandSource = result.source || 'mock';
     renderCommandResult();
   } catch (error) {
     showToast(error.message || '生成命令失败');
@@ -2319,6 +2331,32 @@ async function importProtocolDocument() {
   }
 }
 
+async function openAiConfig() {
+  try {
+    const snapshot = await window.serialScope.getAiConfig();
+    const provider = window.prompt('AI Provider（mock / deepseek）：', snapshot.provider || 'mock');
+    if (provider === null) return;
+    const providerVal = provider.trim() === 'deepseek' ? 'deepseek' : 'mock';
+    const enabledText = window.prompt('启用 AI（true/false）：', String(snapshot.enabled));
+    if (enabledText === null) return;
+    const enabled = enabledText.trim().toLowerCase() === 'true';
+    const uploadText = window.prompt('允许数据上传到 DeepSeek（true/false，⚠️ 开启后规约文本与串口数据将发送到云端）：', String(snapshot.allowDataUpload));
+    if (uploadText === null) return;
+    const allowDataUpload = uploadText.trim().toLowerCase() === 'true';
+    const serialText = window.prompt('AI 解析时包含最近串口 RX 数据（true/false）：', String(state.ai.includeSerialData || false));
+    if (serialText === null) return;
+    state.ai.includeSerialData = serialText.trim().toLowerCase() === 'true';
+    const apiKey = window.prompt('DeepSeek API Key（可留空，用环境变量 DEEPSEEK_API_KEY）：', '');
+    const updates = { provider: providerVal, enabled, allowDataUpload };
+    if (apiKey && apiKey.trim()) updates.apiKey = apiKey.trim();
+    const result = await window.serialScope.configureAi(updates);
+    showToast(`AI 配置已保存：${result.provider}｜启用=${result.enabled}｜上传=${result.allowDataUpload}｜Key=${result.hasApiKey ? '有' : '无'}（来源 ${result.keySource}）`);
+    await refreshAiStatus();
+  } catch (error) {
+    showToast(error.message || '配置 AI 失败');
+  }
+}
+
 function initAiPanel() {
   const saved = loadSavedProtocol();
   if (saved) {
@@ -2327,6 +2365,7 @@ function initAiPanel() {
   }
   refreshAiStatus();
   $('#importProtocolButton').addEventListener('click', importProtocolDocument);
+  $('#aiConfigButton').addEventListener('click', openAiConfig);
   $('#aiEnableButton').addEventListener('click', enableAi);
   $('#aiParseButton').addEventListener('click', parseProtocol);
   $('#aiGenerateButton').addEventListener('click', generateAiCommands);

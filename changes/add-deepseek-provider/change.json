@@ -3,7 +3,7 @@
   "id": "add-deepseek-provider",
   "title": "Add real DeepSeek AI provider (data upload, L3)",
   "riskTier": "L3",
-  "state": "draft",
+  "state": "ready-for-review",
   "owner": "implementer",
   "reviewMode": "P",
   "archiveRequiresHumanConfirmation": true,
@@ -12,6 +12,10 @@
     "reviewRound": 1,
     "p1": 0,
     "p2": 2,
-    "stage": "G2-design"
+    "stage": "G2-design",
+    "p2Resolved": true,
+    "g3": {
+      "blocked": "真实 DeepSeek 端到端需 DEEPSEEK_API_KEY 环境变量，由用户本机运行 npm run test:deepseek 验证"
+    }
   }
 }
