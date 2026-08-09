@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "add-mcp-server",
+  "title": "Add Model Context Protocol server for external AI clients",
+  "riskTier": "L3",
+  "state": "draft",
+  "owner": "implementer",
+  "reviewMode": "P",
+  "archiveRequiresHumanConfirmation": true
+}
