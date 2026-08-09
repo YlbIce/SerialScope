@@ -64,8 +64,16 @@
     "mock 命令为固定示例，真实价值待真实 provider"
   ],
   "handoff": {
-    "state": "ready-for-review",
-    "request": "核对 ai.generateCommands 授权边界、命令→宏映射、加入宏库与证据范围"
+    "state": "review-passed",
+    "reviewResult": "approved",
+    "reviewRound": 1,
+    "p1": 0,
+    "p2": 2,
+    "p2Notes": [
+      "addCommandToMacros 用宏名去重，AI 若生成重名命令会互相覆盖（mock 命令名唯一，真实 provider 需注意）",
+      "命令→宏映射假设 code 为完整帧（含校验）；动态填参/补校验（F-014）留待后续"
+    ],
+    "request": "无 P1；已核验授权边界（not-enabled）、main 白名单、前端 escapeHtml 防 XSS、无上传；可归档（需用户确认）"
   }
 }
 ```

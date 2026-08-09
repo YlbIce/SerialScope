@@ -3,8 +3,14 @@
   "id": "add-ai-command-generation",
   "title": "Expose ai.generateCommands and add command generation + macro reuse UI",
   "riskTier": "L2",
-  "state": "ready-for-review",
+  "state": "review-passed",
   "owner": "implementer",
   "reviewMode": "S",
-  "archiveRequiresHumanConfirmation": true
+  "archiveRequiresHumanConfirmation": true,
+  "review": {
+    "result": "approved",
+    "reviewRound": 1,
+    "p1": 0,
+    "p2": 2
+  }
 }
