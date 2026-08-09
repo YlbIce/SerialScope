@@ -16,6 +16,14 @@
 
 ## 条目
 
+## 2026-08-09 · L3 · add-mcp-server P2 修复（ready-for-review，推送待恢复，未归档）
+
+- 需求来源：G3 审核 P2（send_and_expect 无等待、RX 缓冲无端口隔离），用户要求处理 P2。
+- 实现：`McpBridge._waitForNewRx`（send_and_expect 发送后等待新 RX 或超时）；`currentPort` 记录（open/configure 后）；read_data 指定不匹配端口返回空（端口隔离）。
+- 验证：`npm run test:mcp-authorization` passed（新增 3 个 P2 场景：currentPort 记录/read_data 端口隔离返回空/send_and_expect 等待返回新 RX）；`test:mcp-handshake`、`npm run check`、`npm run process:check`（20 个活动 change）passed。
+- 风险与后续：P1/P2 均已解决（p1Resolved/p2Resolved=true）；COM10/COM11 端到端仍 blocked；真实设备未授权。本地提交 `7957ec7`（P2 修复），连同 `5fbd67b`/`8b62774`/`66ddf31`/`d8f7038` 共 5 个提交**推送 blocked**：连不上 github.com，待恢复后 `git push origin master`。
+- 关联：`changes/add-mcp-server/`；本地提交 `7957ec7`。
+
 ## 2026-08-09 · L3 · add-mcp-server P1 修复（ready-for-review，推送待恢复，未归档）
 
 - 需求来源：G3 审核发现 P1（MCP open_connection/configure_connection 复用全局 serial.open 抢占主会话），用户要求修复 P1。
