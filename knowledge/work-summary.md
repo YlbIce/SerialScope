@@ -16,6 +16,16 @@
 
 ## 条目
 
+## 2026-08-09 · L2 · add-ai-provider-adapter（ready-for-review，未归档）
+
+- 需求来源：用户要求继续第 3 步，AI 适配层涉及数据上传授权边界。
+- 范围：新增 `AiAdapter` 接口框架 + `MockAiProvider`（本地、不联网）+ 授权门面；**不接入 Named Pipe JSON-RPC、不实现真实网络 provider、默认不上传数据**，真实联网上传留待后续 L3 授权。不改 IPC 契约。
+- 实现：`AiAdapter.{h,cpp}`（`AiProvider` 抽象/`AiAdapter` 门面/`MockAiProvider`/`AiError`/请求响应模型）；`AiAdapterTests.cpp`；CMake 注册 `serialscope-ai-adapter-tests`；创建 L2 变更包 `changes/add-ai-provider-adapter/`。
+- 授权边界：`enabled=false` 抛 not-enabled；`allowDataUpload=false` 时 `requiresDataUpload()==true` 的 provider 抛 data-upload-denied；mock 恒允许（数据不出本机）。修复 `providerName` 悬垂引用警告。
+- 验证：`serialscope-ai-adapter-tests.exe` passed（授权边界/mock 确定性/provider 选择/调用计数）；checksum/frame-decoder tests passed（无回归）；`npm run build:backend`、`npm run check`、`npm run process:check`（17 个活动 change）均 passed。真实网络 provider not-run（未授权，属后续 L3）。
+- 风险与后续：真实网络 provider 与串口/AI 数据上传为后续 L3；IPC 暴露 ai.* 时须强制复用本门面，否则破坏数据边界。
+- 关联：`changes/add-ai-provider-adapter/`；提交 `16bf3e6`，推送 `origin/master`。
+
 ## 2026-08-09 · L2 · review · add-checksum-engine / add-length-field-framing（review-passed，未归档）
 
 - 需求来源：用户要求对第 1、2 步两个 L2 变更包做独立只读审核。
