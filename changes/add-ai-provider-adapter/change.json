@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "add-ai-provider-adapter",
+  "title": "Add AI adapter interface with local-only mock provider to backend",
+  "riskTier": "L2",
+  "state": "ready-for-review",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}

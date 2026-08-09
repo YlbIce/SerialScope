@@ -110,6 +110,22 @@ target_link_libraries(serialscope-checksum-engine-tests PRIVATE
   nlohmann_json::nlohmann_json
 )
 
+add_executable(serialscope-ai-adapter-tests
+  tests/AiAdapterTests.cpp
+  src/AiAdapter.cpp
+)
+
+target_compile_definitions(serialscope-ai-adapter-tests PRIVATE
+  WIN32_LEAN_AND_MEAN
+  NOMINMAX
+)
+
+target_include_directories(serialscope-ai-adapter-tests PRIVATE src)
+
+if (MSVC)
+  target_compile_options(serialscope-ai-adapter-tests PRIVATE /utf-8 /permissive-)
+endif()
+
 add_executable(serialscope-virtual-serial-writer tests/VirtualSerialWriter.cpp)
 add_executable(serialscope-virtual-serial-reader tests/VirtualSerialReader.cpp)
 add_executable(serialscope-virtual-serial-roundtrip tests/VirtualSerialRoundTrip.cpp)
