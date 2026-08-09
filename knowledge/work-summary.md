@@ -16,6 +16,15 @@
 
 ## 条目
 
+## 2026-08-09 · L2 · add-checksum-engine（ready-for-review，未归档）
+
+- 需求来源：用户提供的《AI 智能串口调试工具需求规划书 & 方案设计书》，F-016/F-017/F-018 要求发送自动校验、接收自动验证、支持 CRC8/CRC16-Modbus/CRC32/校验和/XOR/LRC。
+- 范围：新增 C++ 后端 `ChecksumEngine`（CRC8/CRC16-MODBUS/CRC16-CCITT/CRC16-XMODEM/CRC32/SUM8/SUM16_LE/SUM16_BE/XOR/LRC/NONE），提供 `calculate`/`append`/`verify`/`name`/`fromName`/`width`；注册 CMake 测试目标。不改 Named Pipe JSON-RPC 契约，不改现有 `crc16Modbus`/`appendModbusCrc`。
+- 实现：`backend/src/ChecksumEngine.{h,cpp}`、`backend/tests/ChecksumEngineTests.cpp`、`backend/CMakeLists.txt`，并创建 L2 变更包 `changes/add-checksum-engine/`。
+- 验证：`backend/build/serialscope-checksum-engine-tests.exe` passed（标准向量、append/verify round-trip 与篡改检测、与 crc16Modbus 一致性、NONE/非法类型/越界防御、名称与宽度映射）；`serialscope-frame-decoder-tests.exe` passed（无回归）；`npm run build:backend`、`npm run check`、`npm run process:check`（15 个活动 change）均 passed。真实物理串口 not-run（未授权，纯内部库不触碰串口）。
+- 风险与后续：CRC 参数化本步固定默认；校验接入 Named Pipe 方法、自动填充/验证接入真实设备需后续单独 change 与授权。变更已提审，等待独立只读审核，不得自动归档。
+- 关联：`changes/add-checksum-engine/`；提交 `43799b3`，推送至 `origin/master`。
+
 ## 2026-08-03 · L2 · 可执行通信测试工作台（implementing，未归档）
 
 - 需求来源：用户确认将产品差异化聚焦为“设备通信联调与回归测试台”，并要求 React Flow 节点编排与宏协同。
