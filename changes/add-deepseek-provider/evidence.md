@@ -55,7 +55,16 @@
   ],
   "handoff": {
     "state": "draft",
-    "request": "G2：独立评审 design.md 与 specification.md（Node 调用/配置持久化/真实-回退分发/串口上传/API 错误处理）"
+    "reviewStage": "G2-design",
+    "reviewResult": "conditionally-approved",
+    "reviewRound": 1,
+    "p1": 0,
+    "p2": 2,
+    "p2Notes": [
+      "需明确 Main 拦截 ai.parseProtocol/ai.generateCommands 的分发点（在 backend:rpc handler 或新增 RPC 层），实现真实调用 vs 回退 mock 的判断",
+      "Main 侧真实调用的 allowDataUpload 判断须独立于 C++ AiAdapter（避免绕过授权门面），并统一与 C++ ai.configure 的 allowDataUpload 状态一致"
+    ],
+    "request": "G2 设计评审 conditionally-approved（P1=0/P2=2）；实现时解决两个 P2 分发点细节；真实调用需 DEEPSEEK_API_KEY"
   }
 }
 ```
