@@ -16,6 +16,14 @@
 
 ## 条目
 
+## 2026-08-09 · L3 · add-deepseek-provider 配置窗口 + 测试连接（ready-for-review，未归档）
+
+- 需求来源：用户要求应用内配置 DeepSeek API Key、配完有"测试连接"确认配置生效、其他用 DeepSeek 固定配置（用户只提供 Key）。
+- 实现：`deepseek-provider.js` 加 `testConnection`（极小请求验证连通性，callChatCompletions 支持 maxTokens）；main.js `ai:test` IPC；preload `testAiConnection`；renderer 新增专门 AI 配置 modal（API Key password 输入 + 含串口数据 checkbox + 测试结果区），`saveAiConfig` 用户只填 Key，自动设 provider=deepseek/enabled/allowDataUpload=true；`refreshAiStatus` 优先读 Main `ai:config`（与真实 provider 分发一致）。
+- 验证：`npm run test:protocol-ai-ui` passed（AI 配置 modal 打开/填 Key/测试连接成功/保存）；`npm run test:deepseek` passed（含 testConnection 无 Key 抛 no-api-key）；ai-rpc/mcp passed（无回归）；`npm run check`、`npm run process:check`（22 个活动 change）passed。
+- 风险与后续：真实 DeepSeek 调用待用户设 DEEPSEEK_API_KEY 本机验证；L3 保持 ready-for-review（G3），不得自动归档。
+- 关联：`changes/add-deepseek-provider/`；提交 `70a77f0`，推送 `origin/master`。
+
 ## 2026-08-09 · L3 · add-deepseek-provider（G3 ready-for-review，真实调用待用户 Key，未归档）
 
 - 需求来源：用户要求接入真实 DeepSeek provider（G1：方案A Node 调用/userData 明文/含串口数据/Key 用环境变量）。
