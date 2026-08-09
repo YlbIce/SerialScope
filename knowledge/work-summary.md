@@ -16,6 +16,14 @@
 
 ## 条目
 
+## 2026-08-09 · L3 · add-mcp-server（G3 ready-for-review，COM10/COM11 blocked，未归档）
+
+- 需求来源：用户要求第 6 步实现 MCP Server（G1 决策：stdio 传输 + 端口白名单授权 + 默认关闭 + read_data 快照 + COM10/COM11 验证）。
+- 范围：自研最小 MCP stdio 协议（无 SDK 依赖）；独立 Node 子进程 `mcp-server.js`；Main 侧 `mcp-bridge.js`（端口白名单持久化、复用 allowedRpcMethods+后端门面、read_data RX 快照缓冲）；main.js MCP 菜单/ipc handlers；preload 暴露启停。修复 G2 设计 P1（工具表矛盾）。
+- 验证：`npm run test:mcp-handshake` passed（initialize/tools/list 7 工具/tools/call 转发/未知工具 -32602）；`npm run test:mcp-authorization` passed（白名单外 -32002/方法白名单外 -32001/read_data 快照/白名单持久化/缺 payload -32602）；`npm run check`、`npm run process:check`（20 个活动 change）passed。**COM10/COM11 端到端 blocked**：`Win32_SerialPort` 仅 COM3/COM4（蓝牙），ELTIMA 虚拟串口对未创建，无法收发验证。
+- 风险与后续：改变安全边界，向外部进程暴露串口；自研 MCP 未验证真实 Claude Desktop/Cursor 客户端；COM10/COM11 端到端待虚拟串口恢复；真实物理设备未授权。L3 保持 ready-for-review（G3），不得自动归档。
+- 关联：`changes/add-mcp-server/`；提交 `e1c1638`，推送 `origin/master`。
+
 ## 2026-08-09 · L2 · add-ai-command-generation（ready-for-review，未归档）
 
 - 需求来源：用户要求继续第 5 步，AI 命令生成 + 宏库复用。
