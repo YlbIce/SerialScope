@@ -141,11 +141,16 @@ app.whenReady().then(async () => {
     const firstHex = await rendererValue("document.querySelector('#commandGenerateResult .command-row code').textContent");
     if (firstHex !== 'AA 55 01') throw new Error(`expected code 'AA 55 01', got '${firstHex}'`);
 
-    // 9. 加入宏库并验证持久化
-    await rendererValue("document.querySelector('#commandGenerateResult [data-add-command=\"0\"]').click()");
+    // 8.5 命令生成时自动保存到宏库（无需手动点击）
     await waitForRenderer(
       "JSON.parse(localStorage.getItem('serialscope.macros'))?.some?.((macro) => macro.name === 'ReadDeviceInfo' && macro.data === 'AA 55 01')",
-      'command added to macro library');
+      'commands auto-saved to macro library on generation');
+
+    // 9. 手动"加入宏库"仍可用（幂等，覆盖同名宏）
+    await rendererValue("document.querySelector('#commandGenerateResult [data-add-command=\"0\"]').click()");
+    await waitForRenderer(
+      "JSON.parse(localStorage.getItem('serialscope.macros'))?.filter?.((macro) => macro.name === 'ReadDeviceInfo').length === 1",
+      'command add to macro library idempotent (single entry)');
 
     // 10. AI 配置 modal：打开、填 Key、测试连接、保存
     await rendererValue("document.querySelector('#aiConfigButton').click()");

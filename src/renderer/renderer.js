@@ -2270,12 +2270,40 @@ async function generateAiCommands() {
     state.ai.generatedCommands = Array.isArray(result.commands) ? result.commands : [];
     state.ai.commandSource = result.source || 'mock';
     renderCommandResult();
+    // 命令生成时自动保存到宏库（无需逐条手动点击）。
+    const savedCount = saveGeneratedCommandsToMacros(state.ai.generatedCommands);
+    if (savedCount > 0) {
+      showToast(`已生成并保存 ${savedCount} 条命令到宏库`);
+    }
   } catch (error) {
     showToast(error.message || '生成命令失败');
   } finally {
     $('#aiGenerateButton').textContent = '生成命令';
     if (state.ai.enabled) $('#aiGenerateButton').disabled = false;
   }
+}
+
+// 把生成的命令批量自动保存到宏库，返回实际保存条数。
+function saveGeneratedCommandsToMacros(commands) {
+  const macros = loadMacros();
+  let saved = 0;
+  (Array.isArray(commands) ? commands : []).forEach((command) => {
+    const data = codeToHex(command.code);
+    if (!data.trim()) return;
+    const name = (command.name || 'AI 命令').trim();
+    const existing = macros.find((macro) => macro.name === name);
+    if (existing) {
+      existing.mode = 'hex';
+      existing.data = data;
+      existing.lineEnding = 'none';
+      existing.appendModbusCrc = false;
+    } else {
+      macros.push({ name, mode: 'hex', data, lineEnding: 'none', appendModbusCrc: false });
+    }
+    saved += 1;
+  });
+  if (saved > 0) saveMacros(macros);
+  return saved;
 }
 
 function renderCommandResult() {
@@ -2305,24 +2333,12 @@ function renderCommandResult() {
 }
 
 function addCommandToMacros(command) {
-  const data = codeToHex(command.code);
-  if (!data.trim()) {
+  const saved = saveGeneratedCommandsToMacros([command]);
+  if (saved === 0) {
     showToast('命令字节为空，无法加入宏库');
     return;
   }
-  const macros = loadMacros();
-  const name = (command.name || 'AI 命令').trim();
-  const existing = macros.find((macro) => macro.name === name);
-  if (existing) {
-    existing.mode = 'hex';
-    existing.data = data;
-    existing.lineEnding = 'none';
-    existing.appendModbusCrc = false;
-  } else {
-    macros.push({ name, mode: 'hex', data, lineEnding: 'none', appendModbusCrc: false });
-  }
-  saveMacros(macros);
-  showToast(`命令“${name}”已加入宏库`);
+  showToast(`命令“${command.name || 'AI 命令'}”已加入宏库`);
 }
 
 async function importProtocolDocument() {
