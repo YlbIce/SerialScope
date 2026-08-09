@@ -16,6 +16,15 @@
 
 ## 条目
 
+## 2026-08-09 · L2 · review · add-ai-command-generation（review-passed，approved，未归档）
+
+- 需求来源：用户要求独立审核第 5 步 AI 命令生成。
+- 方式：逐行核对 `ai.generateCommands` 分发（经 AiAdapter 门面、参数校验）、main 白名单、前端命令生成区（escapeHtml 防 XSS）；重跑 `test-ai-rpc` 与 `test-protocol-ai-ui` 复现 evidence。
+- 结论：`approved`（P1=0 / P2=2）。P2：宏名去重（重名覆盖）；命令→宏假设完整帧（动态填参/补校验 F-014 留待后续）。
+- 已核验：未启用抛 not-enabled、main 白名单放行、前端 escapeHtml、无上传（mock）。
+- 风险与后续：无 P1，可归档（需用户确认）。推送已恢复，`origin/master` 同步至 `7a749ef`。
+- 关联：`changes/add-ai-command-generation/`；提交 `7a749ef`。
+
 ## 2026-08-09 · L2 · archive · add-checksum-engine / add-length-field-framing / add-ai-provider-adapter / add-protocol-ai-parse
 
 - 需求来源：用户选择归档已完成的 L2 变更包。
