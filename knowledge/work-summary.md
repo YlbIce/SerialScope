@@ -16,6 +16,15 @@
 
 ## 条目
 
+## 2026-08-09 · L2 · add-protocol-ai-parse（ready-for-review，推送待恢复，未归档）
+
+- 需求来源：用户要求继续第 4 步，规约文本→结构化配置 + 人工校正 UI。
+- 范围：后端注册 `ai.status`/`ai.configure`/`ai.parseProtocol`（经 AiAdapter 授权门面，未启用抛 not-enabled）；main 白名单加入 ai.*；前端新增 `#page-protocol`（规约输入/AI 启用/解析渲染/字段校正/保存/导出）。不改串口 RPC 契约；mock 不联网、allowDataUpload 默认 false。
+- 实现：`NamedPipeServer` 接入 `AiAdapter` 与 ai.* 分发（AiError 映射为 JSON-RPC error code）；`main.js` 白名单与 `Ctrl+6` 导航；`index.html`/`renderer.js` 新增规约页面与逻辑；`AiAdapter.cpp` 接入 backend 构建。
+- 验证：`npm run test:ai-rpc` passed（ai.status/未启用拒绝/ai.chat 拒绝/configure/启用后解析）；`npm run test:protocol-ai-ui` passed（Electron UI 端到端：导航、启用、解析渲染 0xAA 0x55、两字段、校正保存 localStorage）；三个 native tests passed（无回归）；`npm run build:backend`、`npm run check`、`npm run process:check`（18 个活动 change）均 passed。
+- 风险与后续：真实网络 AI provider 与上传为后续 L3；mock 解析价值有限；校正 UI 不同 DPI 视觉未覆盖。本地提交 `d77fedc` 已完成，**推送 blocked**：连不上 github.com:443（网络问题），待恢复后 `git push origin master`。
+- 关联：`changes/add-protocol-ai-parse/`；本地提交 `d77fedc`。
+
 ## 2026-08-09 · L2 · add-ai-provider-adapter（ready-for-review，未归档）
 
 - 需求来源：用户要求继续第 3 步，AI 适配层涉及数据上传授权边界。
