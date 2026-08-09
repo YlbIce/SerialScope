@@ -16,6 +16,15 @@
 
 ## 条目
 
+## 2026-08-09 · L2 · add-length-field-framing（ready-for-review，推送待恢复，未归档）
+
+- 需求来源：用户提供的《AI 智能串口调试工具需求规划书 & 方案设计书》，F-008/F-010 要求按帧头特征码+长度域自适应分帧。
+- 范围：扩展 `FrameDecoder` 新增 `FrameMode::Length`，支持 header 特征码 + 长度域动态帧长；不改 Raw/Delimiter/Fixed 既有行为，不改 Named Pipe JSON-RPC 契约。
+- 实现：`FrameDecoder.{h,cpp}` 新增 `Length` 模式（header 定位、长度域读取、lengthIncludesHeader/lengthEndian/min/maxFrameSize、粘包/半包、超限丢弃后恢复、非法配置防御）；`FrameDecoderTests.cpp` 增补 Length 场景；创建 L2 变更包 `changes/add-length-field-framing/`。
+- 验证：`serialscope-frame-decoder-tests.exe` passed（Length 完整帧/粘包/半包/includesHeader/大端/超限恢复/非法配置，Raw/Delimiter/Fixed 无回归）；`serialscope-checksum-engine-tests.exe` passed；`npm run build:backend`、`npm run check`、`npm run process:check`（16 个活动 change）均 passed。真实物理串口 not-run（未授权，纯解码）。
+- 风险与后续：payload 内伪 header 误分帧留待 AI/规则层；Named Pipe 接入 length 配置留作后续 change。本地提交 `5dbf12d` 已完成，**推送 blocked**：连不上 github.com:443（网络问题），待恢复后 `git push origin master`。
+- 关联：`changes/add-length-field-framing/`；本地提交 `5dbf12d`。
+
 ## 2026-08-09 · L2 · add-checksum-engine（ready-for-review，未归档）
 
 - 需求来源：用户提供的《AI 智能串口调试工具需求规划书 & 方案设计书》，F-016/F-017/F-018 要求发送自动校验、接收自动验证、支持 CRC8/CRC16-Modbus/CRC32/校验和/XOR/LRC。
