@@ -55,7 +55,19 @@
   ],
   "handoff": {
     "state": "draft",
-    "request": "G2：独立评审 design.md 与 specification.md（MCP 传输/工具/端口白名单授权/read_data 语义/COM10/COM11 验证边界）"
+    "reviewStage": "G2-design",
+    "reviewResult": "conditionally-approved",
+    "reviewRound": 1,
+    "p1": 1,
+    "p2": 2,
+    "p1Notes": [
+      "design.md 工具授权表（send_data/send_and_expect 行）残留'每次确认'，与授权模型'白名单内即放行'及 G1 决策矛盾，须修正后进入实现"
+    ],
+    "p2Notes": [
+      "MCP stdio 协议实现细节未定（@modelcontextprotocol/sdk 或自研；initialize protocolVersion、tools/call params 结构）",
+      "spec 场景 read_data 未精确说明读哪个会话/端口（send_data 到 COM10 后 COM11 读回，read_data 需明确目标会话）"
+    ],
+    "request": "实施者须先修正 design.md P1 矛盾，再进入实现；真实设备未授权，不接物理串口"
   }
 }
 ```
