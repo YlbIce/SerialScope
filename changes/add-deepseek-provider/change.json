@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "add-deepseek-provider",
+  "title": "Add real DeepSeek AI provider (data upload, L3)",
+  "riskTier": "L3",
+  "state": "draft",
+  "owner": "implementer",
+  "reviewMode": "P",
+  "archiveRequiresHumanConfirmation": true
+}
