@@ -34,8 +34,8 @@ C++ 后端（Named Pipe JSON-RPC）
 | `serial.status` | 读 | 无 |
 | `read_data` | 读 | 端口在授权集合内 |
 | `open_connection` | 写 | 端口在授权集合内 + 参数校验 |
-| `send_data` | 写 | 端口在授权集合内 + **每次确认（人机闸门）** |
-| `send_and_expect` | 写 | 端口在授权集合内 + **每次确认** |
+| `send_data` | 写 | 端口在授权集合内（授权后即放行，不逐次确认） |
+| `send_and_expect` | 写 | 端口在授权集合内（授权后即放行，不逐次确认） |
 | `configure_connection` | 写 | 端口在授权集合内 |
 
 ## 授权模型（端口白名单 + 复用门面）

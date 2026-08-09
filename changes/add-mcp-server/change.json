@@ -3,7 +3,7 @@
   "id": "add-mcp-server",
   "title": "Add Model Context Protocol server for external AI clients",
   "riskTier": "L3",
-  "state": "draft",
+  "state": "ready-for-review",
   "owner": "implementer",
   "reviewMode": "P",
   "archiveRequiresHumanConfirmation": true,
@@ -12,6 +12,8 @@
     "reviewRound": 1,
     "p1": 1,
     "p2": 2,
-    "stage": "G2-design"
+    "stage": "G2-design",
+    "p1Resolved": true,
+    "p2Resolved": false
   }
 }

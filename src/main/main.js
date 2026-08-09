@@ -7,6 +7,7 @@ const { pathToFileURL } = require('url');
 const { NamedPipeRpcClient } = require('./named-pipe-rpc');
 const { createWorkbenchExecutionAuthorizer } = require('./workbench-execution');
 const { findRegisteredVirtualSimulatorPort } = require('./virtual-simulator-port');
+const { McpBridge } = require('./mcp-bridge');
 
 // 串口工具的核心功能不依赖 GPU。部分 Windows 环境缺少 Chromium GPU
 // 子进程所需运行库时，强制软件渲染可避免应用在创建窗口前直接退出。
@@ -28,6 +29,7 @@ const startupSimulatorConfig = (() => {
 })();
 let backendProcess = null;
 let backendRpc = null;
+let mcpBridge = null;
 let simulatorInstance = null;
 let isQuitting = false;
 const simulatorReadyTimeoutMs = 30000;
@@ -175,6 +177,7 @@ function startBackend() {
   const startedProcess = backendProcess;
   const startedRpc = backendRpc;
   backendRpc.on('notification', (method, params) => {
+    if (method === 'serial.rx' && mcpBridge) mcpBridge.appendRxFrame(params);
     sendToRenderer('backend:rpc-notification', { method, params });
   });
   backendRpc.on('error', (error) => sendToRenderer('backend:log', `Named Pipe 错误：${error.message}`));
@@ -349,6 +352,15 @@ function createApplicationMenu() {
       ]
     },
     {
+      label: 'MCP',
+      submenu: [
+        { label: '启动 MCP Server', click: () => { const r = ensureMcpBridge().start(); sendUiAction('mcp-started', r); } },
+        { label: '停止 MCP Server', click: () => { const r = ensureMcpBridge().stop(); sendUiAction('mcp-stopped', r); } },
+        { type: 'separator' },
+        { label: '配置端口白名单…', click: () => sendUiAction('mcp-configure') }
+      ]
+    },
+    {
       label: '帮助',
       submenu: [{ label: '关于 SerialScope', click: () => sendUiAction('about') }]
     }
@@ -475,6 +487,35 @@ ipcMain.handle('backend:rpc', async (_event, method, params = {}) => {
     await workbenchExecution.validateSend(_event.sender.id);
   }
   return backendRpc.call(method, params);
+});
+
+// ---- MCP Server 管理 ----
+function ensureMcpBridge() {
+  if (!mcpBridge) {
+    mcpBridge = new McpBridge({ backendRpc, allowedRpcMethods, userDataPath: app.getPath('userData') });
+  }
+  return mcpBridge;
+}
+
+ipcMain.handle('mcp:status', () => {
+  ensureMcpBridge();
+  return { running: mcpBridge.isRunning(), allowPorts: mcpBridge.getAllowedPorts() };
+});
+
+ipcMain.handle('mcp:start', () => {
+  ensureMcpBridge();
+  return mcpBridge.start();
+});
+
+ipcMain.handle('mcp:stop', () => {
+  ensureMcpBridge();
+  return mcpBridge.stop();
+});
+
+ipcMain.handle('mcp:setPorts', (_event, ports) => {
+  ensureMcpBridge();
+  mcpBridge.setAllowedPorts(Array.isArray(ports) ? ports : []);
+  return { allowPorts: mcpBridge.getAllowedPorts() };
 });
 
 ipcMain.handle('window:openModule', (_event, moduleId) => openModuleWindow(moduleId));

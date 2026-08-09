@@ -16,6 +16,10 @@ contextBridge.exposeInMainWorld('serialScope', {
   openModuleWindow: (moduleId) => ipcRenderer.invoke('window:openModule', moduleId),
   saveTextFile: (options) => ipcRenderer.invoke('file:saveText', options),
   openJsonFile: (options) => ipcRenderer.invoke('file:openJson', options),
+  startMcpServer: () => ipcRenderer.invoke('mcp:start'),
+  stopMcpServer: () => ipcRenderer.invoke('mcp:stop'),
+  getMcpStatus: () => ipcRenderer.invoke('mcp:status'),
+  setMcpPorts: (ports) => ipcRenderer.invoke('mcp:setPorts', ports),
   onBackendLog: (callback) => {
     const handler = (_event, message) => callback(message);
     ipcRenderer.on('backend:log', handler);

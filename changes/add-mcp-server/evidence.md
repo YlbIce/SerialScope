@@ -10,64 +10,62 @@
       "command": "检查 package.json 与 node_modules",
       "kind": "code-inspection",
       "status": "passed",
-      "purpose": "确认仓库无 MCP SDK 依赖、无既有 MCP 实现",
+      "purpose": "确认仓库无 MCP SDK 依赖、无既有 MCP 实现，采用自研最小 MCP stdio 协议",
       "doesNotProve": "MCP Server 的目标行为"
+    }
+  ],
+  "remediation": [
+    {
+      "command": "scripts/test-mcp-serial.js（COM10/COM11 端到端）",
+      "kind": "virtual-serial-integration",
+      "status": "blocked",
+      "purpose": "验证白名单内 send_data 经 COM10 发送、COM11 读回",
+      "doesNotProve": "真实物理设备兼容性",
+      "observed": "reader 退出码 5；Get-CimInstance Win32_SerialPort 仅发现 COM3/COM4（蓝牙），COM10/COM11 ELTIMA 虚拟串口对当前未创建",
+      "reason": "虚拟串口对不可用，无法端到端收发验证"
     }
   ],
   "verification": [
     {
-      "command": "MCP stdio 握手与 tools/list 集成测试",
+      "command": "npm run test:mcp-handshake",
       "kind": "integration-test",
-      "status": "not-run",
-      "purpose": "验证 MCP 子进程 initialize/tools/list 握手",
-      "doesNotProve": "串口工具授权行为",
-      "reason": "尚未实现，G2 评审后实施"
+      "status": "passed",
+      "purpose": "验证 MCP stdio 握手 initialize、tools/list（7 工具）、tools/call 经 IPC 转发与回传、未知工具 -32602",
+      "doesNotProve": "串口授权行为与真实设备"
     },
     {
-      "command": "COM10/COM11 虚拟串口对端到端（send_data/read_data/open_connection）",
+      "command": "npm run test:mcp-authorization",
+      "kind": "integration-test",
+      "status": "passed",
+      "purpose": "验证端口白名单外写被拒（-32002）、白名单内 send_data 映射 serial.send、方法白名单外被拒（-32001）、read_data 快照、白名单持久化、缺 payload 被拒（-32602）",
+      "doesNotProve": "真实串口收发"
+    },
+    {
+      "command": "COM10/COM11 端到端（send_data/read_data）",
       "kind": "virtual-serial-integration",
-      "status": "not-run",
-      "purpose": "验证白名单内端口 send_data 经 COM10 发送、COM11 读回、read_data 返回快照",
+      "status": "blocked",
+      "purpose": "验证 MCP send_data 经 COM10 发送、COM11 读回、read_data 返回快照",
       "doesNotProve": "真实物理设备兼容性",
-      "reason": "尚未实现，G2 评审后实施"
+      "reason": "当前环境 COM10/COM11 虚拟串口对不可用（仅 COM3/COM4）"
     },
     {
-      "command": "端口白名单外被拒 / 任意 RPC 拒绝",
-      "kind": "integration-test",
-      "status": "not-run",
-      "purpose": "验证白名单外端口操作与 MCP 子进程任意 RPC 被拒",
-      "doesNotProve": "合法授权路径",
-      "reason": "尚未实现，G2 评审后实施"
-    },
-    {
-      "command": "npm run build:backend / npm run check / npm run process:check",
-      "kind": "native-build / syntax-check / process-contract",
-      "status": "not-run",
-      "purpose": "验证构建与 change 包结构",
-      "doesNotProve": "MCP 运行行为",
-      "reason": "尚未实现，G2 评审后实施"
+      "command": "npm run check / npm run process:check",
+      "kind": "syntax-check / process-contract",
+      "status": "passed",
+      "purpose": "验证 JS 语法与 change 包结构（20 个活动 change）",
+      "doesNotProve": "MCP 运行行为"
     }
   ],
   "residualRisk": [
-    "改变默认安全边界，向外部进程暴露串口能力",
-    "写工具（send_data/send_and_expect）经端口白名单授权后放行，不逐次确认",
-    "真实物理设备未授权；COM10/COM11 为 ELTIMA 虚拟串口对"
+    "改变默认安全边界，向外部进程暴露串口能力；写工具经端口白名单授权后放行",
+    "COM10/COM11 端到端 blocked，虚拟串口对不可用；真实物理设备未授权",
+    "自研 MCP stdio 最小实现，未验证真实 Claude Desktop/Cursor 客户端兼容性",
+    "MCP 客户端（第三方）权限模型不可控，Main 侧授权门面独立于其可信度"
   ],
   "handoff": {
-    "state": "draft",
-    "reviewStage": "G2-design",
-    "reviewResult": "conditionally-approved",
-    "reviewRound": 1,
-    "p1": 1,
-    "p2": 2,
-    "p1Notes": [
-      "design.md 工具授权表（send_data/send_and_expect 行）残留'每次确认'，与授权模型'白名单内即放行'及 G1 决策矛盾，须修正后进入实现"
-    ],
-    "p2Notes": [
-      "MCP stdio 协议实现细节未定（@modelcontextprotocol/sdk 或自研；initialize protocolVersion、tools/call params 结构）",
-      "spec 场景 read_data 未精确说明读哪个会话/端口（send_data 到 COM10 后 COM11 读回，read_data 需明确目标会话）"
-    ],
-    "request": "实施者须先修正 design.md P1 矛盾，再进入实现；真实设备未授权，不接物理串口"
+    "state": "ready-for-review",
+    "reviewStage": "G3",
+    "request": "G3 独立审核：核对 MCP stdio 协议、端口白名单授权、Main 转发复用门面、read_data 快照、COM10/COM11 blocked 边界"
   }
 }
 ```
