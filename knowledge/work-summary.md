@@ -16,6 +16,14 @@
 
 ## 条目
 
+## 2026-08-09 · L2 · archive · add-checksum-engine / add-length-field-framing / add-ai-provider-adapter / add-protocol-ai-parse
+
+- 需求来源：用户选择归档已完成的 L2 变更包。
+- 范围：4 个 L2 变更包（均 review-passed，P1=0）归档为 `archived`，各创建 `archive.md`（Review decision + Human archive gate）并更新 `change.json`（state=archived + archive 字段）。
+- 验证：`npm run process:check` passed（20 个活动 change，归档包仍参与检查）。
+- 残余：各包保留的 P2 见各自 archive.md；不涉及真实串口/上传行为变更。推送已恢复，`origin/master` 同步至 `b4506d3`。
+- 关联：4 个变更包 archive.md；提交 `b4506d3`。
+
 ## 2026-08-09 · L3 · add-mcp-server P2 修复（ready-for-review，推送待恢复，未归档）
 
 - 需求来源：G3 审核 P2（send_and_expect 无等待、RX 缓冲无端口隔离），用户要求处理 P2。
