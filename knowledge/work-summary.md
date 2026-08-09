@@ -16,6 +16,15 @@
 
 ## 条目
 
+## 2026-08-09 · 修复 · ai:test 测试连接用输入框 Key（推送待恢复）
+
+- 问题：用户在应用测试连接先报 401 `****9e9a`（用了已轮换作废的旧 Key），更换新 Key 后报"未配置 DeepSeek API Key"。
+- 根因：`ai:test` 用已保存的 runtimeApiKey，用户先点"测试连接"再点"保存"时 Key 未保存，报未配置；且确认代码无硬编码 Key，`9e9a` 为用户输入的旧 Key。
+- 修复：`ai:test` 接受 `{apiKey}` 参数，优先用输入框 Key（preload `testAiConnection(apiKey)`，renderer 传输入框值），无需先保存即可测试。
+- 验证：`npm run test:protocol-ai-ui`、`npm run check`、`npm run process:check`（22 个活动 change）passed。
+- 风险与后续：用户需输入**新** Key（非 9e9a）测试；本地提交 `c9b80b5` 已完成，**推送 blocked**（网络连不上 github.com，待恢复后 `git push origin master`）。
+- 关联：提交 `c9b80b5`。
+
 ## 2026-08-09 · L2 · 命令生成自动保存到宏库（功能增强）
 
 - 需求来源：用户要求"命令生成时保存"。
