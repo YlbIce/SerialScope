@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { AiConfig } = require('../src/main/ai-config');
-const { parseProtocolWithDeepSeek, generateCommandsWithDeepSeek, testConnection } = require('../src/main/deepseek-provider');
+const { parseProtocolWithDeepSeek, generateCommandsWithDeepSeek, testConnection, extractJson } = require('../src/main/deepseek-provider');
 
 function check(condition, message) {
   if (!condition) throw new Error(message);
@@ -15,6 +15,17 @@ function check(condition, message) {
 async function main() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'serialscope-ai-'));
   try {
+    // 0. extractJson 容错：数组顶层、对象顶层、前缀说明文字、fenced 代码块
+    const arrText = '好的，以下是命令列表：\n```json\n[\n  {"name":"a","code":[170,85,1],"description":"x"},\n  {"name":"b","code":[170,85,2],"description":"y"}\n]\n```';
+    const arr = extractJson(arrText);
+    check(Array.isArray(arr) && arr.length === 2 && arr[0].name === 'a', 'extractJson 数组顶层（fenced+前缀文字）');
+    const objText = '{"frame_format":{"header":[170,85]},"fields":[{"name":"cmd","offset":2,"size":1}]}';
+    const obj = extractJson(objText);
+    check(obj && obj.frame_format.header[0] === 170 && Array.isArray(obj.fields), 'extractJson 对象顶层');
+    const plainArr = '[{"name":"x","code":[1,2],"description":""}]';
+    const plain = extractJson(plainArr);
+    check(Array.isArray(plain) && plain[0].name === 'x', 'extractJson 裸数组');
+
     // 1. 配置持久化（不含 Key）
     const config = new AiConfig(dir);
     config.configure({ provider: 'deepseek', enabled: true, allowDataUpload: true, apiKey: 'runtime-secret' });

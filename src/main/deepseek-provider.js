@@ -52,16 +52,49 @@ function getApiKey(runtimeKey) {
   return runtimeKey || process.env.DEEPSEEK_API_KEY || '';
 }
 
-// 提取 JSON 代码块或首段 JSON。
+// 提取 JSON 代码块或首段 JSON（支持对象 {} 或数组 [] 顶层）。
 function extractJson(text) {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);
   const candidate = fenced ? fenced[1] : text;
-  const start = candidate.indexOf('{');
-  const end = candidate.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) {
-    throw new Error('DeepSeek 未返回有效 JSON');
+  // 定位顶层 JSON 起始（第一个 { 或 [）。
+  let start = -1;
+  for (let i = 0; i < candidate.length; i++) {
+    const ch = candidate[i];
+    if (ch === '{' || ch === '[') { start = i; break; }
+    if (ch !== ' ' && ch !== '\n' && ch !== '\r' && ch !== '\t') {
+      // 遇到非空白、非 JSON 起始字符，跳过（容忍前缀说明文字）。
+    }
   }
-  return JSON.parse(candidate.slice(start, end + 1));
+  if (start === -1) throw new Error('DeepSeek 未返回有效 JSON');
+  const open = candidate[start];
+  const close = open === '{' ? '}' : ']';
+  // 从 start 开始，按括号配对找到匹配的结束位置。
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let end = -1;
+  for (let i = start; i < candidate.length; i++) {
+    const ch = candidate[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === open) depth += 1;
+    else if (ch === close) {
+      depth -= 1;
+      if (depth === 0) { end = i; break; }
+    }
+  }
+  if (end === -1) throw new Error('DeepSeek 未返回有效 JSON（括号未闭合）');
+  const jsonText = candidate.slice(start, end + 1);
+  try {
+    return JSON.parse(jsonText);
+  } catch (error) {
+    throw new Error(`DeepSeek 返回 JSON 解析失败: ${error.message}`);
+  }
 }
 
 const PROTOCOL_SYSTEM_PROMPT = '你是一个专业的串口通信协议解析专家。请分析规约文本，提取帧头、长度域、校验、字段信息，仅输出 JSON（不要额外文字）。格式：{"frame_format":{"header":[字节],"length_field":{"offset":..,"size":..,"includes_header":bool}},"checksum":{"type":"..."},"fields":[{"name":"...","offset":..,"size":..,"type":"uint8","unit":"","description":""}]}';
@@ -116,4 +149,4 @@ async function testConnection({ apiKey }) {
   return { ok: true, reply: (reply || '').slice(0, 200) };
 }
 
-module.exports = { parseProtocolWithDeepSeek, generateCommandsWithDeepSeek, testConnection, getApiKey };
+module.exports = { parseProtocolWithDeepSeek, generateCommandsWithDeepSeek, testConnection, getApiKey, extractJson };
