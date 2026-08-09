@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "initialize-ai-development-framework",
+  "title": "Initialize the repository AI development framework",
+  "riskTier": "L2",
+  "state": "archived",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true,
+  "review": {
+    "result": "conditionally-approved",
+    "reviewRound": 1,
+    "p1": 0,
+    "p2": 2
+  },
+  "archive": {
+    "approvedBy": "user",
+    "approval": "归档后，开始执行项目优化",
+    "proof": "changes/initialize-ai-development-framework/archive.md"
+  }
+}

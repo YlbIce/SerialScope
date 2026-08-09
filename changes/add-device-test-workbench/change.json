@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "add-device-test-workbench",
+  "title": "Add device communication test workbench",
+  "riskTier": "L2",
+  "state": "review-passed",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}

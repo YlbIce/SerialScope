@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "add-fixed-length-framing",
+  "title": "Add fixed-length serial framing",
+  "riskTier": "L2",
+  "state": "blocked",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}

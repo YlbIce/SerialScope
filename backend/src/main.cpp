@@ -1,8 +1,9 @@
-#include "WebSocketServer.h"
+#include "NamedPipeServer.h"
 
 #include <cstdlib>
 #include <iostream>
 #include <string>
+#include <thread>
 
 #include <boost/asio.hpp>
 
@@ -17,13 +18,14 @@ bool hasArg(int argc, char* argv[], const std::string& name) {
   return false;
 }
 
-unsigned short readPort(int argc, char* argv[]) {
+std::wstring readPipeName(int argc, char* argv[]) {
   for (int i = 1; i + 1 < argc; ++i) {
-    if (std::string(argv[i]) == "--port" || std::string(argv[i]) == "-p") {
-      return static_cast<unsigned short>(std::stoi(argv[i + 1]));
+    if (std::string(argv[i]) == "--pipe") {
+      const std::string value = argv[i + 1];
+      return std::wstring(value.begin(), value.end());
     }
   }
-  return 47990;
+  return {};
 }
 
 } // namespace
@@ -36,26 +38,30 @@ int main(int argc, char* argv[]) {
 
   if (hasArg(argc, argv, "--help") || hasArg(argc, argv, "-h") || hasArg(argc, argv, "/?")) {
     std::cout
-      << "用法：serialscope-backend.exe [--port 47990]\n"
+      << "用法：serialscope-backend.exe --pipe \\\\.\\pipe\\SerialScope.Native.<token>\n"
       << "选项：\n"
-      << "  -p, --port <port>  WebSocket 监听端口，默认 47990。\n"
+      << "  --pipe <name>      Named Pipe 名称（必填）。\n"
       << "  -v, --version      输出后端版本。\n"
       << "  -h, --help         输出帮助信息。\n";
     return 0;
   }
 
   try {
-    const unsigned short port = readPort(argc, argv);
-    boost::asio::io_context io;
-    auto server = std::make_shared<WebSocketServer>(io, port);
-    if (!server->listen()) {
-      std::cerr << "WebSocket 服务启动失败，端口：" << port << "\n";
+    const std::wstring pipeName = readPipeName(argc, argv);
+    if (pipeName.empty()) {
+      std::cerr << "必须提供 --pipe Named Pipe 名称\n";
       return 2;
     }
-
-    std::cout << "SerialScope Native backend listening on ws://127.0.0.1:" << port << "\n";
-    io.run();
-    return 0;
+    boost::asio::io_context io;
+    auto work = boost::asio::make_work_guard(io);
+    std::thread ioThread([&io] { io.run(); });
+    NamedPipeServer server(io, pipeName);
+    std::cout << "SerialScope Native backend listening on Named Pipe\n";
+    const int result = server.run();
+    work.reset();
+    io.stop();
+    ioThread.join();
+    return result;
   } catch (const std::exception& error) {
     std::cerr << "后端异常：" << error.what() << "\n";
     return 1;

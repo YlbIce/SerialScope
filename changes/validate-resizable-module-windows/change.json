@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "validate-resizable-module-windows",
+  "title": "Validate resizable standalone module windows",
+  "riskTier": "L2",
+  "state": "review-passed",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}

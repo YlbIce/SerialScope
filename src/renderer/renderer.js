@@ -1,16 +1,41 @@
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+const setText = (selector, value) => {
+  const element = $(selector);
+  if (element) element.textContent = value;
+};
+const standaloneModule = new URLSearchParams(window.location.search).get('module');
 
 const state = {
-  ws: null,
-  wsUrl: '',
   connected: false,
+  reconnectTimer: null,
+  reconnectAttempts: 0,
+  logRenderScheduled: false,
   serialOpen: false,
   ports: [],
   logs: [],
   pausedLogs: [],
   viewMode: 'mixed',
-  autoSendTimer: null,
+  autoQuery: {
+    timer: null,
+    timeoutTimer: null,
+    inFlight: false,
+    activeToken: 0,
+    nextToken: 0,
+    sendSettled: false,
+    responseReceived: false,
+    timeoutObserved: false,
+    sequence: 0,
+    sent: 0,
+    responses: 0,
+    timeouts: 0,
+    startedAt: 0
+  },
+  logSequence: 0,
+  simulatorSendChain: Promise.resolve(),
+  simulatorReceiveBuffer: { hex: '', text: '', timer: null, deadlineTimer: null },
+  simulatorOwner: !standaloneModule,
+  simulatorAutoPortVerified: false,
   metrics: {
     rxBytes: 0,
     txBytes: 0,
@@ -111,6 +136,16 @@ const defaultSampleRules = [
 ];
 
 let sampleRules = cloneSampleRules(defaultSampleRules);
+let selectedMacroIndex = 0;
+
+const defaultSimulator = {
+  enabled: false,
+  builtIn: 'none',
+  delayMs: 20,
+  rules: []
+};
+let simulator = loadSimulator();
+let simulatorBootstrapConfig = null;
 
 const defaultMacros = [
   { name: 'AT', mode: 'text', data: 'AT', lineEnding: 'CRLF' },
@@ -134,69 +169,170 @@ function showToast(message) {
 }
 
 async function boot() {
-  const info = await window.serialScope.getBackendInfo();
-  state.wsUrl = info.wsUrl;
+  await window.serialScope.getBackendInfo();
+  const bootstrap = window.serialScope.getSimulatorBootstrap?.();
+  if (bootstrap && standaloneModule === 'simulator') applySimulatorBootstrap(bootstrap);
   $('#backendState').textContent = '连接中';
   bindEvents();
+  const isStandalone = ['terminal', 'trend', 'rules', 'macros', 'simulator', 'serial-config'].includes(standaloneModule);
+  if (isStandalone) {
+    document.body.classList.add('standalone-module');
+    if (standaloneModule === 'serial-config') document.body.classList.add('serial-config-window');
+  }
   restoreLayout();
+  if (isStandalone) switchPage(`page-${standaloneModule}`);
   loadSavedRules();
   loadSampleRules();
   renderRules();
   renderSampleRules();
   renderMacros();
+  renderSimulator();
   restoreProfile();
-  connectWebSocket();
+  restoreSerialDraft();
+  updateFramingUi();
+  connectBackend();
   window.serialScope.onBackendLog((message) => addSystemLog(message.trim()));
   window.serialScope.onBackendExit(() => {
     state.connected = false;
     updateConnectionUi('Native C++ 后端已退出');
+    scheduleReconnect();
+  });
+  window.serialScope.onBackendRpcNotification(({ method, params }) => {
+    handleMessage({ type: method.replaceAll('.', ':'), payload: params });
+  });
+  window.serialScope.onSimulatorOwnership?.(({ active }) => {
+    state.simulatorOwner = Boolean(active);
+    updateSimulatorStatus();
+  });
+  window.serialScope.onSimulatorBootstrap?.((config) => {
+    applySimulatorBootstrap(config);
+  });
+  window.serialScope.onUiAction?.(handleUiAction);
+  window.addEventListener('storage', (event) => {
+    if (event.key === 'serialscope.simulator') {
+      simulator = loadSimulator();
+      renderSimulator();
+    }
+    if (event.key === 'serialscope.serial-draft') restoreSerialDraft();
   });
   window.setInterval(updateRateMetrics, 1000);
   requestAnimationFrame(drawRateChart);
   requestAnimationFrame(drawSampleChart);
 }
 
-function connectWebSocket() {
-  if (state.ws) {
-    state.ws.close();
-  }
-
-  const ws = new WebSocket(state.wsUrl);
-  state.ws = ws;
-
-  ws.addEventListener('open', () => {
+async function connectBackend() {
+  clearReconnectTimer();
+  try {
+    const started = await window.serialScope.startBackend();
+    if (!started.started) throw new Error(started.message || 'Native C++ 后端无法启动');
+    const [ports, serialState] = await Promise.all([
+      window.serialScope.callBackend('ports.list', {}),
+      window.serialScope.callBackend('serial.status', {})
+    ]);
     state.connected = true;
+    state.reconnectAttempts = 0;
     updateConnectionUi('后端已连接');
-    sendCommand('ports:list');
-  });
-
-  ws.addEventListener('message', (event) => {
-    handleMessage(JSON.parse(event.data));
-  });
-
-  ws.addEventListener('close', () => {
+    handleMessage({ type: 'ports:list', payload: ports });
+    handleMessage({ type: 'serial:state', payload: serialState });
+    autoOpenSimulatorPort();
+  } catch (error) {
     state.connected = false;
     state.serialOpen = false;
-    updateConnectionUi('后端未连接');
-    window.setTimeout(connectWebSocket, 1200);
-  });
+    updateConnectionUi(`后端未连接：${error.message}`);
+    scheduleReconnect();
+  }
+}
 
-  ws.addEventListener('error', () => {
-    updateConnectionUi('后端连接失败');
-  });
+async function autoOpenSimulatorPort() {
+  if (standaloneModule !== 'simulator' || !state.connected || !simulatorBootstrapConfig?.serial?.portName || simulatorBootstrapConfig.autoOpened) return;
+  simulatorBootstrapConfig.autoOpened = true;
+  const port = simulatorBootstrapConfig.serial;
+  const config = {
+    portName: port.portName,
+    baudRate: Number(port.baudRate || 9600),
+    dataBits: Number(port.dataBits || 8),
+    parity: port.parity || 'none',
+    stopBits: port.stopBits || '1',
+    flowControl: port.flowControl || 'none',
+    framing: port.framing || { mode: 'raw' }
+  };
+  try {
+    await window.serialScope.validateSimulatorAutoPort(config.portName);
+    state.simulatorAutoPortVerified = true;
+    const openResult = await sendCommand('serial:open', config);
+    if (openResult?.ok === false || openResult?.isOpen === false) {
+      throw new Error(openResult?.message || `无法打开 ${config.portName}`);
+    }
+    addSystemLog(`模拟下位机已自动打开 ${config.portName}`);
+    await window.serialScope.reportSimulatorReady({ ok: true, message: `${config.portName} 已打开` });
+  } catch (error) {
+    simulatorBootstrapConfig.autoOpened = false;
+    state.simulatorAutoPortVerified = false;
+    addSystemLog(`模拟下位机自动打开失败：${error.message}`);
+    await window.serialScope.reportSimulatorReady({ ok: false, message: error.message }).catch(() => {});
+  }
+}
+
+function applySimulatorBootstrap(config) {
+  if (standaloneModule !== 'simulator' || !config || typeof config !== 'object') return;
+  simulator = normalizeSimulator(config);
+  localStorage.setItem('serialscope.simulator', JSON.stringify(simulator));
+  simulatorBootstrapConfig = { ...config, autoOpened: false };
+  state.simulatorAutoPortVerified = false;
+  renderSimulator();
+  addSystemLog('已从通信测试工作台接收模拟下位机配置');
+  autoOpenSimulatorPort();
+}
+
+function clearReconnectTimer() {
+  if (state.reconnectTimer) {
+    window.clearTimeout(state.reconnectTimer);
+    state.reconnectTimer = null;
+  }
+}
+
+function scheduleReconnect() {
+  if (state.reconnectTimer || state.connected) {
+    return;
+  }
+  const delay = Math.min(8000, 600 * (2 ** state.reconnectAttempts));
+  state.reconnectAttempts += 1;
+  scheduleConnection(delay);
+}
+
+function scheduleConnection(delay) {
+  clearReconnectTimer();
+  state.reconnectTimer = window.setTimeout(() => {
+    state.reconnectTimer = null;
+    connectBackend();
+  }, delay);
 }
 
 function sendCommand(type, payload = {}) {
-  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
+  if (!state.connected) {
     showToast('Native C++ 后端未连接');
-    return;
+    return Promise.resolve({ ok: false, message: 'Native C++ 后端未连接' });
   }
-  state.ws.send(JSON.stringify({ requestId: requestId(), type, payload }));
+  const method = type.replace(':', '.');
+  return window.serialScope.callBackend(method, payload)
+    .then((result) => {
+      handleMessage({ type: type === 'ports:list' ? type : `${type}:result`, payload: result });
+      return result;
+    })
+    .catch((error) => {
+      addSystemLog(`后端调用失败：${error.message}`);
+      showToast(error.message || '后端调用失败');
+      return { ok: false, message: error.message || '后端调用失败' };
+    });
 }
 
 function handleMessage(message) {
+  if (!message || typeof message !== 'object' || typeof message.type !== 'string') {
+    addSystemLog('后端消息格式无效');
+    return;
+  }
   const payload = message.payload || {};
-  if (message.type === 'backend:hello') {
+  if (message.type === 'backend:hello' || message.type === 'backend:ready') {
     addSystemLog(`${payload.name} ${payload.version}`);
     return;
   }
@@ -211,6 +347,17 @@ function handleMessage(message) {
   }
   if (message.type === 'serial:rx' || message.type === 'serial:tx') {
     addTransferLog(payload);
+    if (message.type === 'serial:rx') {
+      completeAutoQueryWithResponse(payload);
+      queueSimulatorResponse(payload);
+    }
+    return;
+  }
+  if (message.type === 'backend:backpressure') {
+    const dropped = Number(payload.droppedMessages || 0);
+    const messageText = payload.message || '后端丢弃了部分实时事件';
+    addSystemLog(`${messageText}（${dropped} 条）`);
+    showToast(messageText);
     return;
   }
   if (message.type === 'serial:error' || message.type === 'error') {
@@ -230,10 +377,15 @@ function handleMessage(message) {
 
 function updateConnectionUi(message) {
   $('#backendState').textContent = message;
-  $('#startBackendButton').disabled = state.connected;
+  const startButton = $('#startBackendButton');
+  if (startButton) startButton.disabled = state.connected;
 }
 
 function switchPage(pageId) {
+  if (pageId === 'page-serial-config' && standaloneModule !== 'serial-config') {
+    openSerialConfiguration();
+    return;
+  }
   const page = $(`#${pageId}`);
   if (!page) {
     return;
@@ -244,7 +396,7 @@ function switchPage(pageId) {
   $$('.nav-item').forEach((item) => item.classList.toggle('active', item.dataset.pageTarget === pageId));
   $('#pageTitle').textContent = page.dataset.pageTitle || 'SerialScope';
   $('#pageEyebrow').textContent = page.dataset.pageEyebrow || '';
-  persistLayout();
+  if (!standaloneModule) persistLayout();
 }
 
 function restoreLayout() {
@@ -259,6 +411,10 @@ function restoreLayout() {
     }
   } catch {
     state.layout.hiddenPanels = [];
+  }
+
+  if (!standaloneModule && state.layout.activePage === 'page-serial-config') {
+    state.layout.activePage = 'page-terminal';
   }
 
   applyDockLayout();
@@ -376,10 +532,10 @@ function startSplitterDrag(event) {
 
 function updateSerialState(payload) {
   state.serialOpen = Boolean(payload.isOpen);
-  state.metrics.rxBytes = Number(payload.rxBytes || state.metrics.rxBytes);
-  state.metrics.txBytes = Number(payload.txBytes || state.metrics.txBytes);
-  state.metrics.rxFrames = Number(payload.rxFrames || state.metrics.rxFrames);
-  state.metrics.txFrames = Number(payload.txFrames || state.metrics.txFrames);
+  state.metrics.rxBytes = finiteNumberOr(payload.rxBytes, state.metrics.rxBytes);
+  state.metrics.txBytes = finiteNumberOr(payload.txBytes, state.metrics.txBytes);
+  state.metrics.rxFrames = finiteNumberOr(payload.rxFrames, state.metrics.rxFrames);
+  state.metrics.txFrames = finiteNumberOr(payload.txFrames, state.metrics.txFrames);
 
   const pill = $('#serialState');
   pill.classList.toggle('offline', !state.serialOpen);
@@ -391,11 +547,25 @@ function updateSerialState(payload) {
   $('#txFrameSummary').textContent = state.metrics.txFrames;
   $('#rxByteSummary').textContent = formatBytes(state.metrics.rxBytes);
   $('#txByteSummary').textContent = formatBytes(state.metrics.txBytes);
+  $('#configSerialState').textContent = state.serialOpen ? `${payload.portName} 已打开` : '请配置后打开';
+  if (!state.serialOpen && $('#autoSendCheck').checked) {
+    stopAutoQuery();
+    updateAutoSendStatus('自动查询已暂停：串口未打开（在途 0）');
+  } else if (state.serialOpen && $('#autoSendCheck').checked && !state.autoQuery.inFlight && !state.autoQuery.timer) {
+    scheduleAutoQuery(0);
+  }
+}
+
+function finiteNumberOr(value, fallback) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
 }
 
 function renderPorts() {
   const select = $('#portSelect');
-  const current = select.value;
+  let draftPort = '';
+  try { draftPort = JSON.parse(localStorage.getItem('serialscope.serial-draft'))?.portName || ''; } catch { /* ignored */ }
+  const current = select.value || draftPort;
   select.innerHTML = '';
 
   if (state.ports.length === 0) {
@@ -420,18 +590,83 @@ function serialConfig() {
     dataBits: Number($('#dataBitsSelect').value),
     parity: $('#paritySelect').value,
     stopBits: $('#stopBitsSelect').value,
-    flowControl: $('#flowControlSelect').value
+    flowControl: $('#flowControlSelect').value,
+    framing: {
+      mode: $('#frameModeSelect').value,
+      delimiter: currentFrameDelimiter(),
+      frameSize: Number($('#frameSizeInput').value)
+    }
   };
 }
 
-function sendCurrentInput() {
-  const payload = {
+function restoreSerialDraft() {
+  try {
+    const draft = JSON.parse(localStorage.getItem('serialscope.serial-draft'));
+    if (!draft || typeof draft !== 'object') return;
+    $('#portSelect').value = draft.portName || $('#portSelect').value;
+    $('#baudRateSelect').value = String(draft.baudRate || $('#baudRateSelect').value);
+    $('#dataBitsSelect').value = String(draft.dataBits || $('#dataBitsSelect').value);
+    $('#paritySelect').value = draft.parity || $('#paritySelect').value;
+    $('#stopBitsSelect').value = draft.stopBits || $('#stopBitsSelect').value;
+    $('#flowControlSelect').value = draft.flowControl || $('#flowControlSelect').value;
+    $('#frameModeSelect').value = draft.framing?.mode || $('#frameModeSelect').value;
+    applyFrameDelimiter(draft.framing?.delimiter || currentFrameDelimiter());
+    $('#frameSizeInput').value = Number(draft.framing?.frameSize || $('#frameSizeInput').value);
+    updateFramingUi();
+  } catch {
+    addSystemLog('串口配置草稿损坏，已忽略');
+  }
+}
+
+function persistSerialDraft() {
+  localStorage.setItem('serialscope.serial-draft', JSON.stringify(serialConfig()));
+}
+
+function updateFramingUi() {
+  const enabled = $('#frameModeSelect').value === 'delimiter';
+  const fixed = $('#frameModeSelect').value === 'fixed';
+  const delimiter = $('#frameDelimiterSelect');
+  delimiter.disabled = !enabled;
+  const custom = delimiter.value === 'custom';
+  $('#frameDelimiterHexField').hidden = !enabled || !custom;
+  $('#frameDelimiterHexInput').disabled = !enabled || !custom;
+  $('#frameSizeField').hidden = !fixed;
+  $('#frameSizeInput').disabled = !fixed;
+}
+
+function currentFrameDelimiter() {
+  const value = $('#frameDelimiterSelect').value;
+  return value === 'custom' ? `HEX:${$('#frameDelimiterHexInput').value.trim()}` : value;
+}
+
+function applyFrameDelimiter(value) {
+  const delimiter = String(value || 'LF');
+  const select = $('#frameDelimiterSelect');
+  if (Array.from(select.options).some((option) => option.value === delimiter)) {
+    select.value = delimiter;
+  } else if (delimiter.startsWith('HEX:')) {
+    select.value = 'custom';
+    $('#frameDelimiterHexInput').value = delimiter.slice(4);
+  } else {
+    select.value = 'LF';
+  }
+}
+
+function currentSendPayload() {
+  return {
     mode: $('#sendModeSelect').value,
     data: $('#sendInput').value,
     lineEnding: $('#lineEndingSelect').value,
     appendModbusCrc: $('#crcCheck').checked
   };
-  sendCommand('serial:send', payload);
+}
+
+function sendCurrentInput() {
+  if ($('#autoSendCheck').checked && state.autoQuery.inFlight) {
+    showToast('自动查询正在等待应答；请先停止自动发送再手动发送');
+    return Promise.resolve({ ok: false, message: '自动查询在途' });
+  }
+  return sendCommand('serial:send', currentSendPayload());
 }
 
 function addTransferLog(payload) {
@@ -443,7 +678,8 @@ function addTransferLog(payload) {
 
   const matchedRules = matchRules(payload.text || '', payload.hex || '');
   const row = {
-    time: new Date(payload.timestamp || Date.now()).toLocaleTimeString('zh-CN', { hour12: false }),
+    sequence: ++state.logSequence,
+    time: formatLogTime(payload.timestamp),
     direction: payload.direction,
     bytes: payload.bytes,
     text: payload.text || '',
@@ -456,12 +692,11 @@ function addTransferLog(payload) {
   state.logs = state.logs.slice(-2000);
   state.metrics.lastRxBytes = row.direction === 'rx' ? row.bytes : state.metrics.lastRxBytes;
   state.metrics.lastTxBytes = row.direction === 'tx' ? row.bytes : state.metrics.lastTxBytes;
-  $('#lastFrameBytes').textContent = `${row.bytes} B`;
   if (row.direction === 'rx' && !$('#samplePauseCheck').checked) {
     extractSamples(row);
   }
   updateInspector(row);
-  renderLog();
+  scheduleLogRender();
 }
 
 function addSystemLog(text) {
@@ -469,7 +704,8 @@ function addSystemLog(text) {
     return;
   }
   state.logs.push({
-    time: new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+    sequence: ++state.logSequence,
+    time: formatLogTime(),
     direction: 'sys',
     bytes: 0,
     text,
@@ -477,7 +713,18 @@ function addSystemLog(text) {
     hit: false,
     rules: []
   });
-  renderLog();
+  scheduleLogRender();
+}
+
+function scheduleLogRender() {
+  if (state.logRenderScheduled) {
+    return;
+  }
+  state.logRenderScheduled = true;
+  requestAnimationFrame(() => {
+    state.logRenderScheduled = false;
+    renderLog();
+  });
 }
 
 function matchRules(text, hex) {
@@ -493,7 +740,7 @@ function matchRules(text, hex) {
       matched.push(rule.name);
     }
   }
-  $('#ruleHits').textContent = state.metrics.ruleHits;
+  setText('#ruleHits', state.metrics.ruleHits);
   updateRuleCounters();
   return matched;
 }
@@ -1076,11 +1323,19 @@ function renderSampleLegend() {
 
 function renderMacros() {
   const macros = loadMacros();
+  if (macros.length === 0) {
+    selectedMacroIndex = -1;
+  } else if (selectedMacroIndex < 0 || selectedMacroIndex >= macros.length) {
+    selectedMacroIndex = 0;
+  }
   $('#macroGrid').innerHTML = macros.map((macro, index) => `
-    <button class="macro-button" data-index="${index}" type="button">
-      <strong>${escapeHtml(macro.name)}</strong>
-      <span>${escapeHtml(macro.mode.toUpperCase())} · ${escapeHtml(macro.data)}</span>
-    </button>
+    <article class="macro-card ${index === selectedMacroIndex ? 'selected' : ''}">
+      <button class="macro-button" data-index="${index}" type="button">
+        <strong>${escapeHtml(macro.name)}</strong>
+        <span>${escapeHtml(macro.mode.toUpperCase())} · ${escapeHtml(macro.data)}</span>
+      </button>
+      <button class="macro-edit-button" data-edit-macro="${index}" type="button">编辑</button>
+    </article>
   `).join('');
 
   $$('.macro-button').forEach((button) => {
@@ -1093,6 +1348,13 @@ function renderMacros() {
       sendCommand('serial:send', macro);
     });
   });
+  $$('[data-edit-macro]').forEach((button) => {
+    button.addEventListener('click', () => {
+      selectedMacroIndex = Number(button.dataset.editMacro);
+      renderMacros();
+    });
+  });
+  renderMacroEditor();
 }
 
 function loadMacros() {
@@ -1101,6 +1363,311 @@ function loadMacros() {
   } catch {
     return defaultMacros;
   }
+}
+
+function saveMacros(macros) {
+  localStorage.setItem('serialscope.macros', JSON.stringify(macros));
+  renderMacros();
+}
+
+function renderMacroEditor() {
+  const macros = loadMacros();
+  const macro = macros[selectedMacroIndex];
+  const controls = ['#macroNameInput', '#macroModeSelect', '#macroDataInput', '#macroLineEndingSelect', '#macroCrcCheck', '#saveMacroButton', '#deleteMacroButton'];
+  const enabled = Boolean(macro);
+  controls.forEach((selector) => { $(selector).disabled = !enabled; });
+  if (!macro) {
+    $('#macroEditorHint').textContent = '暂无宏，请新建';
+    $('#macroNameInput').value = '';
+    $('#macroDataInput').value = '';
+    return;
+  }
+  $('#macroEditorHint').textContent = `正在编辑：${macro.name}`;
+  $('#macroNameInput').value = macro.name;
+  $('#macroModeSelect').value = macro.mode || 'text';
+  $('#macroDataInput').value = macro.data || '';
+  $('#macroLineEndingSelect').value = macro.lineEnding || 'none';
+  $('#macroCrcCheck').checked = Boolean(macro.appendModbusCrc);
+}
+
+function newMacro() {
+  const macros = loadMacros();
+  macros.push({ name: '新宏', mode: 'text', data: '', lineEnding: 'none', appendModbusCrc: false });
+  selectedMacroIndex = macros.length - 1;
+  saveMacros(macros);
+  $('#macroNameInput').focus();
+}
+
+function saveMacroEditor() {
+  const macros = loadMacros();
+  if (!macros[selectedMacroIndex]) return;
+  const name = $('#macroNameInput').value.trim();
+  const data = $('#macroDataInput').value;
+  if (!name) {
+    showToast('宏名称不能为空');
+    return;
+  }
+  if (!data.trim()) {
+    showToast('宏数据不能为空');
+    return;
+  }
+  macros[selectedMacroIndex] = {
+    name,
+    mode: $('#macroModeSelect').value,
+    data,
+    lineEnding: $('#macroLineEndingSelect').value,
+    appendModbusCrc: $('#macroCrcCheck').checked
+  };
+  saveMacros(macros);
+  showToast(`宏“${name}”已保存`);
+}
+
+function deleteSelectedMacro() {
+  const macros = loadMacros();
+  if (!macros[selectedMacroIndex]) return;
+  const name = macros[selectedMacroIndex].name;
+  macros.splice(selectedMacroIndex, 1);
+  selectedMacroIndex = Math.min(selectedMacroIndex, macros.length - 1);
+  saveMacros(macros);
+  showToast(`宏“${name}”已删除`);
+}
+
+function loadSimulator() {
+  try {
+    return normalizeSimulator(JSON.parse(localStorage.getItem('serialscope.simulator')));
+  } catch {
+    return { ...defaultSimulator, rules: [] };
+  }
+}
+
+function normalizeSimulator(value) {
+  const source = value && typeof value === 'object' ? value : {};
+  return {
+    enabled: Boolean(source.enabled),
+    builtIn: ['none', 'echo', 'at', 'modbus'].includes(source.builtIn) ? source.builtIn : 'none',
+    delayMs: Math.max(0, Math.min(10000, Number(source.delayMs ?? 20) || 0)),
+    rules: Array.isArray(source.rules) ? source.rules.map((rule) => ({
+      enabled: rule?.enabled !== false,
+      matchHex: String(rule?.matchHex || '*').trim().toUpperCase(),
+      responseHex: String(rule?.responseHex || '').trim().toUpperCase()
+    })).filter((rule) => rule.matchHex && rule.responseHex) : []
+  };
+}
+
+function persistSimulator() {
+  localStorage.setItem('serialscope.simulator', JSON.stringify(simulator));
+}
+
+function renderSimulator() {
+  $('#simulatorEnabledCheck').checked = simulator.enabled;
+  $('#simulatorBuiltinSelect').value = simulator.builtIn;
+  $('#simulatorDelayInput').value = simulator.delayMs;
+  renderSimulatorRules();
+  updateSimulatorStatus();
+}
+
+function renderSimulatorRules() {
+  const container = $('#simulatorRuleList');
+  container.innerHTML = simulator.rules.length ? simulator.rules.map((rule, index) => `
+    <article class="simulator-rule-row" data-simulator-rule="${index}">
+      <label><span>收到 HEX</span><input class="simulator-match" value="${escapeAttribute(rule.matchHex)}" placeholder="01 03 00 00 00 01 或 *" /></label>
+      <label><span>回复 HEX</span><input class="simulator-response" value="${escapeAttribute(rule.responseHex)}" placeholder="01 03 {{RAND8}}" /></label>
+      <button class="danger-button simulator-rule-delete" type="button">删除</button>
+    </article>
+  `).join('') : '<p class="empty-state">还没有自定义规则。内置规约仍可独立使用。</p>';
+  $$('.simulator-rule-delete').forEach((button) => button.addEventListener('click', () => {
+    const index = Number(button.closest('[data-simulator-rule]').dataset.simulatorRule);
+    simulator.rules.splice(index, 1);
+    renderSimulatorRules();
+  }));
+}
+
+function addSimulatorRule() {
+  simulator.rules.push({ enabled: true, matchHex: '*', responseHex: '{{RAND8}}' });
+  renderSimulatorRules();
+}
+
+function saveSimulatorEditor() {
+  const rules = [];
+  for (const row of $$('[data-simulator-rule]')) {
+    const matchHex = row.querySelector('.simulator-match').value.trim().toUpperCase();
+    const responseHex = row.querySelector('.simulator-response').value.trim().toUpperCase();
+    if (!matchHex || !responseHex) {
+      showToast('自定义规则的收发报文不能为空');
+      return;
+    }
+    const compactMatch = normalizeHex(matchHex);
+    if (matchHex !== '*' && (!/^[0-9A-F]+$/.test(compactMatch) || compactMatch.length % 2 !== 0)) {
+      showToast('收到 HEX 必须是完整十六进制字节，或使用 *');
+      return;
+    }
+    try {
+      expandRandomHexTemplate(responseHex);
+    } catch (error) {
+      showToast(`规则回复无效：${error.message}`);
+      return;
+    }
+    rules.push({ enabled: true, matchHex, responseHex });
+  }
+  simulator = normalizeSimulator({
+    enabled: $('#simulatorEnabledCheck').checked,
+    builtIn: $('#simulatorBuiltinSelect').value,
+    delayMs: $('#simulatorDelayInput').value,
+    rules
+  });
+  persistSimulator();
+  renderSimulator();
+  showToast('模拟下位机配置已保存');
+}
+
+function updateSimulatorStatus() {
+  const enabled = $('#simulatorEnabledCheck').checked;
+  const builtIn = $('#simulatorBuiltinSelect').value;
+  const ownerText = state.simulatorOwner ? '本窗口应答' : '由独立模拟窗口应答';
+  $('#simulatorStatus').textContent = enabled
+    ? `已启用：${builtIn === 'none' ? '仅自定义规则' : builtIn.toUpperCase()}，${simulator.rules.length} 条自定义规则，${ownerText}`
+    : '模拟下位机未启用';
+}
+
+function queueSimulatorResponse(payload) {
+  if (!state.simulatorOwner || !simulator.enabled || !state.connected || !state.serialOpen) return;
+  if (simulatorBootstrapConfig?.serial && !state.simulatorAutoPortVerified) return;
+  const incoming = state.simulatorReceiveBuffer;
+  incoming.hex += normalizeHex(payload.hex || '');
+  incoming.text += String(payload.text || '');
+  if (incoming.hex.length > 131072 || incoming.text.length > 65536) {
+    resetSimulatorReceiveBuffer();
+    window.serialScope.reportSimulatorActivity?.({ phase: 'dropped', detail: '原始接收聚合超过 64 KiB 上限' });
+    addSystemLog('模拟下位机接收聚合超过 64 KiB，已丢弃未完成报文');
+    return;
+  }
+  window.serialScope.reportSimulatorActivity?.({ phase: 'received', detail: String(payload.hex || '').slice(0, 1024) });
+  if (!incoming.deadlineTimer) incoming.deadlineTimer = window.setTimeout(flushSimulatorResponse, 24);
+  if (incoming.timer) window.clearTimeout(incoming.timer);
+  // 原始读取块不等同于规约报文。以短暂的空闲窗口合并连续块，避免 Modbus/自定义
+  // 规则只看到半帧；确定性分帧模式仍由后端负责先行聚合。
+  incoming.timer = window.setTimeout(flushSimulatorResponse, 8);
+}
+
+function flushSimulatorResponse() {
+  const incoming = state.simulatorReceiveBuffer;
+  if (incoming.timer) window.clearTimeout(incoming.timer);
+  if (incoming.deadlineTimer) window.clearTimeout(incoming.deadlineTimer);
+  incoming.timer = null;
+  incoming.deadlineTimer = null;
+  const incomingHex = incoming.hex;
+  const incomingText = incoming.text;
+  incoming.hex = '';
+  incoming.text = '';
+  if (!incomingHex && !incomingText) return;
+  const response = simulatorResponseFor(incomingHex, incomingText);
+  if (!response) return;
+  window.serialScope.reportSimulatorActivity?.({ phase: 'matched', detail: response.description || '规则匹配' });
+  state.simulatorSendChain = state.simulatorSendChain
+    .then(() => new Promise((resolve) => window.setTimeout(resolve, simulator.delayMs)))
+    .then(async () => {
+      const result = await window.serialScope.callBackend('serial.send', {
+        mode: response.mode,
+        data: response.data,
+        lineEnding: response.lineEnding || 'none',
+        appendModbusCrc: false
+      });
+      if (!result.ok) throw new Error(result.message || '模拟回复发送失败');
+      window.serialScope.reportSimulatorActivity?.({ phase: 'responded', detail: response.data.slice(0, 1024) });
+      addSystemLog(`模拟下位机已回复：${response.description}`);
+    })
+    .catch((error) => {
+      window.serialScope.reportSimulatorActivity?.({ phase: 'send-failed', detail: error.message });
+      addSystemLog(`模拟下位机回复失败：${error.message}`);
+      showToast(error.message || '模拟下位机回复失败');
+    });
+}
+
+function resetSimulatorReceiveBuffer() {
+  const incoming = state.simulatorReceiveBuffer;
+  if (incoming.timer) window.clearTimeout(incoming.timer);
+  if (incoming.deadlineTimer) window.clearTimeout(incoming.deadlineTimer);
+  incoming.hex = '';
+  incoming.text = '';
+  incoming.timer = null;
+  incoming.deadlineTimer = null;
+}
+
+function simulatorResponseFor(incomingHex, incomingText) {
+  const normalized = normalizeHex(incomingHex);
+  for (const rule of simulator.rules) {
+    if (rule.enabled && (rule.matchHex === '*' || normalizeHex(rule.matchHex) === normalized)) {
+      return { mode: 'hex', data: expandRandomHexTemplate(rule.responseHex), description: `自定义规则 ${rule.matchHex}` };
+    }
+  }
+  if (simulator.builtIn === 'echo' && normalized) {
+    return { mode: 'hex', data: normalized, description: 'Echo' };
+  }
+  if (simulator.builtIn === 'at') {
+    const command = incomingText.trim().toUpperCase();
+    if (!command.startsWith('AT')) return null;
+    return { mode: 'text', data: command === 'AT+GMR' ? 'SerialScope Simulator\r\nOK' : 'OK', lineEnding: 'CRLF', description: 'AT 命令' };
+  }
+  if (simulator.builtIn === 'modbus') {
+    const response = modbusSimulatorResponse(normalized);
+    return response ? { mode: 'hex', data: response, description: 'Modbus RTU' } : null;
+  }
+  return null;
+}
+
+function normalizeHex(value) {
+  return String(value || '').replace(/\s+/g, '').toUpperCase();
+}
+
+function expandRandomHexTemplate(template) {
+  let expanded = String(template || '').toUpperCase()
+    .replace(/\{\{RAND8\}\}/g, () => randomHexByte())
+    .replace(/\{\{RAND16LE\}\}/g, () => `${randomHexByte()}${randomHexByte()}`)
+    .replace(/\{\{RAND16BE\}\}/g, () => `${randomHexByte()}${randomHexByte()}`)
+    .replace(/\{\{RANDHEX:(\d+)\}\}/g, (_all, length) => {
+      const count = Number(length);
+      if (!Number.isInteger(count) || count < 1 || count > 1024) throw new Error('RANDHEX 长度必须在 1 到 1024 之间');
+      return Array.from({ length: count }, randomHexByte).join('');
+    });
+  expanded = normalizeHex(expanded);
+  if (!expanded || !/^[0-9A-F]+$/.test(expanded) || expanded.length % 2 !== 0) {
+    throw new Error('回复必须是十六进制字节或受支持的随机占位符');
+  }
+  return expanded.match(/.{2}/g).join(' ');
+}
+
+function randomHexByte() {
+  const byte = new Uint8Array(1);
+  crypto.getRandomValues(byte);
+  return byte[0].toString(16).padStart(2, '0').toUpperCase();
+}
+
+function modbusSimulatorResponse(hex) {
+  const compact = normalizeHex(hex);
+  if (!/^[0-9A-F]+$/.test(compact) || compact.length < 12 || compact.length % 2 !== 0) return null;
+  const bytes = compact.match(/.{2}/g).map((value) => Number.parseInt(value, 16));
+  const unit = bytes[0];
+  const functionCode = bytes[1];
+  if ((functionCode === 0x03 || functionCode === 0x04) && bytes.length >= 6) {
+    const quantity = (bytes[4] << 8) | bytes[5];
+    if (quantity < 1 || quantity > 125) return null;
+    const data = Array.from({ length: quantity * 2 }, () => randomHexByte()).join('');
+    return appendModbusCrcToHex(`${unit.toString(16).padStart(2, '0')}${functionCode.toString(16).padStart(2, '0')}${(quantity * 2).toString(16).padStart(2, '0')}${data}`);
+  }
+  if ((functionCode === 0x06 || functionCode === 0x10) && bytes.length >= 6) {
+    return appendModbusCrcToHex(bytes.slice(0, 6).map((value) => value.toString(16).padStart(2, '0')).join(''));
+  }
+  return null;
+}
+
+function appendModbusCrcToHex(hex) {
+  const bytes = hex.match(/.{2}/g).map((value) => Number.parseInt(value, 16));
+  let crc = 0xFFFF;
+  for (const value of bytes) {
+    crc ^= value;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc & 1) ? ((crc >>> 1) ^ 0xA001) : (crc >>> 1);
+  }
+  return [...bytes, crc & 0xFF, (crc >>> 8) & 0xFF].map((value) => value.toString(16).padStart(2, '0').toUpperCase()).join(' ');
 }
 
 function currentProfile() {
@@ -1112,10 +1679,12 @@ function currentProfile() {
     lineEnding: $('#lineEndingSelect').value,
     appendCrc: $('#crcCheck').checked,
     autoSendInterval: Number($('#autoSendInterval').value || 1000),
+    autoSendTimeout: Number($('#autoSendTimeout').value || 500),
     viewMode: state.viewMode,
     rules: rules.map(ruleToProfile),
     sampleRules: sampleRules.map(sampleRuleToProfile),
-    macros: loadMacros()
+    macros: loadMacros(),
+    simulator
   };
 }
 
@@ -1155,6 +1724,11 @@ function applyProfile(profile) {
     $('#paritySelect').value = profile.serial.parity || 'none';
     $('#stopBitsSelect').value = profile.serial.stopBits || '1';
     $('#flowControlSelect').value = profile.serial.flowControl || 'none';
+    $('#frameModeSelect').value = profile.serial.framing?.mode || 'raw';
+    applyFrameDelimiter(profile.serial.framing?.delimiter || 'LF');
+    $('#frameSizeInput').value = Number(profile.serial.framing?.frameSize || 8);
+    updateFramingUi();
+    persistSerialDraft();
   }
   $('#sendModeSelect').value = profile.sendMode || 'text';
   $('#sendModeLabel').textContent = $('#sendModeSelect').value.toUpperCase();
@@ -1164,6 +1738,7 @@ function applyProfile(profile) {
   $('#lineEndingSelect').value = profile.lineEnding || 'CRLF';
   $('#crcCheck').checked = Boolean(profile.appendCrc);
   $('#autoSendInterval').value = Number(profile.autoSendInterval || 1000);
+  $('#autoSendTimeout').value = Number(profile.autoSendTimeout || 500);
   if (Array.isArray(profile.macros)) {
     localStorage.setItem('serialscope.macros', JSON.stringify(profile.macros));
     renderMacros();
@@ -1179,6 +1754,11 @@ function applyProfile(profile) {
     renderSampleRules();
     renderSampleLegend();
   }
+  if (profile.simulator) {
+    simulator = normalizeSimulator(profile.simulator);
+    persistSimulator();
+    renderSimulator();
+  }
 }
 
 function restoreProfile() {
@@ -1186,7 +1766,11 @@ function restoreProfile() {
   if (!raw) {
     return;
   }
-  applyProfile(JSON.parse(raw));
+  try {
+    applyProfile(JSON.parse(raw));
+  } catch {
+    addSystemLog('本地配置损坏，已忽略；可重新保存配置');
+  }
 }
 
 async function loadProfileFile() {
@@ -1218,14 +1802,12 @@ function updateRateMetrics() {
   const txRate = Math.max(0, state.metrics.txBytes - last.tx);
   state.metrics.rateHistory.push({ rx: state.metrics.rxBytes, tx: state.metrics.txBytes, rxRate, txRate });
   state.metrics.rateHistory = state.metrics.rateHistory.slice(-80);
-  $('#rxRate').textContent = `${formatBytes(rxRate)}/s`;
-  $('#txRate').textContent = `${formatBytes(txRate)}/s`;
 }
 
 function drawRateChart() {
   const canvas = $('#rateCanvas');
   if (!canvas || canvas.offsetParent === null) {
-    requestAnimationFrame(drawRateChart);
+    window.setTimeout(() => requestAnimationFrame(drawRateChart), 500);
     return;
   }
   const ctx = canvas.getContext('2d');
@@ -1246,13 +1828,13 @@ function drawRateChart() {
   }
   drawSeries(ctx, rect, state.metrics.rateHistory.map((item) => item.rxRate), '#39c98f');
   drawSeries(ctx, rect, state.metrics.rateHistory.map((item) => item.txRate), '#4dbbd7');
-  requestAnimationFrame(drawRateChart);
+  window.setTimeout(() => requestAnimationFrame(drawRateChart), 100);
 }
 
 function drawSampleChart() {
   const canvas = $('#sampleCanvas');
   if (!canvas || canvas.offsetParent === null) {
-    requestAnimationFrame(drawSampleChart);
+    window.setTimeout(() => requestAnimationFrame(drawSampleChart), 500);
     return;
   }
 
@@ -1280,7 +1862,7 @@ function drawSampleChart() {
     ctx.fillStyle = '#717d8b';
     ctx.font = '13px Segoe UI';
     ctx.fillText('等待采集数据：启用规则后，接收帧命中数值会显示在这里', plot.x + 12, plot.y + 24);
-    requestAnimationFrame(drawSampleChart);
+    window.setTimeout(() => requestAnimationFrame(drawSampleChart), 100);
     return;
   }
 
@@ -1329,7 +1911,7 @@ function drawSampleChart() {
     ctx.fill();
   }
 
-  requestAnimationFrame(drawSampleChart);
+  window.setTimeout(() => requestAnimationFrame(drawSampleChart), 100);
 }
 
 function drawGrid(ctx, plot) {
@@ -1378,16 +1960,30 @@ function bindEvents() {
   $$('[data-hide-panel]').forEach((button) => {
     button.addEventListener('click', () => hidePanel(button.dataset.hidePanel));
   });
-  $('#resetLayoutButton').addEventListener('click', resetLayout);
-  $('#startBackendButton').addEventListener('click', async () => {
-    const result = await window.serialScope.startBackend();
-    showToast(result.message);
-    window.setTimeout(connectWebSocket, 500);
+  $$('[data-open-module]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      try {
+        await window.serialScope.openModuleWindow(button.dataset.openModule);
+      } catch (error) {
+        showToast(error.message || '无法打开独立窗口');
+      }
+    });
   });
-  $('#refreshPortsButton').addEventListener('click', () => sendCommand('ports:list'));
-  $('#openButton').addEventListener('click', () => sendCommand('serial:open', serialConfig()));
+  $('#refreshConfigPortsButton').addEventListener('click', () => sendCommand('ports:list'));
+  $('#openButton').addEventListener('click', () => {
+    persistSerialDraft();
+    sendCommand('serial:open', serialConfig());
+  });
   $('#closeButton').addEventListener('click', () => sendCommand('serial:close'));
   $('#sendButton').addEventListener('click', sendCurrentInput);
+  $('#newMacroButton').addEventListener('click', newMacro);
+  $('#saveMacroButton').addEventListener('click', saveMacroEditor);
+  $('#deleteMacroButton').addEventListener('click', deleteSelectedMacro);
+  $('#addSimulatorRuleButton').addEventListener('click', addSimulatorRule);
+  $('#saveSimulatorButton').addEventListener('click', saveSimulatorEditor);
+  $('#simulatorEnabledCheck').addEventListener('change', updateSimulatorStatus);
+  $('#simulatorBuiltinSelect').addEventListener('change', updateSimulatorStatus);
+  $('#simulatorDelayInput').addEventListener('change', updateSimulatorStatus);
   $('#clearLogButton').addEventListener('click', () => {
     state.logs = [];
     state.pausedLogs = [];
@@ -1404,12 +2000,14 @@ function bindEvents() {
   $('#sendModeSelect').addEventListener('change', () => {
     $('#sendModeLabel').textContent = $('#sendModeSelect').value.toUpperCase();
   });
+  $('#frameModeSelect').addEventListener('change', updateFramingUi);
+  $('#frameDelimiterSelect').addEventListener('change', updateFramingUi);
+  ['#portSelect', '#baudRateSelect', '#dataBitsSelect', '#paritySelect', '#stopBitsSelect', '#flowControlSelect', '#frameModeSelect', '#frameDelimiterSelect', '#frameDelimiterHexInput', '#frameSizeInput']
+    .forEach((selector) => $(selector).addEventListener('change', persistSerialDraft));
   $('#autoSendCheck').addEventListener('change', updateAutoSend);
   $('#autoSendInterval').addEventListener('change', updateAutoSend);
-  $('#saveProfileButton').addEventListener('click', saveProfile);
-  $('#loadProfileButton').addEventListener('click', loadProfileFile);
+  $('#autoSendTimeout').addEventListener('change', updateAutoSend);
   $('#pauseReceiveCheck').addEventListener('change', flushPausedLogs);
-  $('#openRuleConfigButton').addEventListener('click', openRuleConfig);
   $('#openRuleConfigInlineButton').addEventListener('click', openRuleConfig);
   $('#openRuleConfigPageButton').addEventListener('click', openRuleConfig);
   $('#closeRuleModalButton').addEventListener('click', closeRuleConfig);
@@ -1436,20 +2034,162 @@ function bindEvents() {
   });
 }
 
-function updateAutoSend() {
-  if (state.autoSendTimer) {
-    window.clearInterval(state.autoSendTimer);
-    state.autoSendTimer = null;
+async function startBackendFromUi() {
+  const result = await window.serialScope.startBackend();
+  showToast(result.message);
+  scheduleConnection(500);
+}
+
+function handleUiAction(detail) {
+  const action = detail?.action;
+  const payload = detail?.payload || {};
+  if (action === 'navigate') return switchPage(payload.pageId);
+  if (action === 'start-backend') return startBackendFromUi();
+  if (action === 'refresh-ports') return sendCommand('ports:list');
+  if (action === 'open-serial') return openSerialConfiguration();
+  if (action === 'close-serial') return sendCommand('serial:close');
+  if (action === 'send-current') return sendCurrentInput();
+  if (action === 'save-profile') return saveProfile();
+  if (action === 'load-profile') return loadProfileFile();
+  if (action === 'export-log') return exportLog();
+  if (action === 'export-samples') return exportSamples();
+  if (action === 'reset-layout') return resetLayout();
+  if (action === 'edit-rules') return openRuleConfig();
+  if (action === 'about') return showToast('SerialScope Native · Named Pipe + JSON-RPC');
+}
+
+async function openSerialConfiguration() {
+  if (standaloneModule === 'serial-config') {
+    persistSerialDraft();
+    sendCommand('serial:open', serialConfig());
+    return;
   }
-  if ($('#autoSendCheck').checked) {
-    const interval = Math.max(50, Number($('#autoSendInterval').value || 1000));
-    state.autoSendTimer = window.setInterval(sendCurrentInput, interval);
+  try {
+    await window.serialScope.openModuleWindow('serial-config');
+  } catch (error) {
+    showToast(error.message || '无法打开串口配置窗口');
   }
 }
 
+function updateAutoSend() {
+  stopAutoQuery();
+  if (!$('#autoSendCheck').checked) {
+    updateAutoSendStatus('自动查询已停止');
+    return;
+  }
+  scheduleAutoQuery(0);
+}
+
+function autoQueryInterval() {
+  return Math.max(10, Number($('#autoSendInterval').value || 1000));
+}
+
+function autoQueryTimeout() {
+  return Math.max(10, Number($('#autoSendTimeout').value || 500));
+}
+
+function updateAutoSendStatus(message) {
+  const status = $('#autoSendStatus');
+  if (!status) return;
+  status.dataset.inflight = state.autoQuery.inFlight ? '1' : '0';
+  status.textContent = message;
+}
+
+function stopAutoQuery() {
+  const query = state.autoQuery;
+  if (query.timer) window.clearTimeout(query.timer);
+  if (query.timeoutTimer) window.clearTimeout(query.timeoutTimer);
+  query.timer = null;
+  query.timeoutTimer = null;
+  query.inFlight = false;
+  query.activeToken = 0;
+  query.sendSettled = false;
+  query.responseReceived = false;
+  query.timeoutObserved = false;
+}
+
+function scheduleAutoQuery(delay) {
+  if (!$('#autoSendCheck').checked) return;
+  if (!state.connected || !state.serialOpen) {
+    updateAutoSendStatus('自动查询等待串口打开（在途 0）');
+    return;
+  }
+  if (state.autoQuery.inFlight) return;
+  state.autoQuery.timer = window.setTimeout(runAutoQuery, Math.max(0, delay));
+  updateAutoSendStatus(`自动查询等待下一轮（在途 0，最小周期 ${autoQueryInterval()} ms）`);
+}
+
+async function runAutoQuery() {
+  state.autoQuery.timer = null;
+  if (!$('#autoSendCheck').checked || !state.connected || !state.serialOpen || state.autoQuery.inFlight) return;
+  const query = state.autoQuery;
+  const token = ++query.nextToken;
+  query.activeToken = token;
+  query.inFlight = true;
+  query.sendSettled = false;
+  query.responseReceived = false;
+  query.timeoutObserved = false;
+  query.sequence += 1;
+  query.sent += 1;
+  query.startedAt = performance.now();
+  updateAutoSendStatus(`自动查询 #${query.sequence}：等待应答（在途 1）`);
+
+  query.timeoutTimer = window.setTimeout(() => onAutoQueryTimeout(token), autoQueryTimeout());
+  const result = await sendCommand('serial:send', currentSendPayload());
+  if (!isActiveAutoQuery(token)) return;
+  query.sendSettled = true;
+  if (!result?.ok) {
+    finishAutoQuery(token, '发送失败');
+    return;
+  }
+  if (query.responseReceived) finishAutoQuery(token, '已收到应答');
+  else if (query.timeoutObserved) finishAutoQuery(token, '应答超时');
+}
+
+function completeAutoQueryWithResponse() {
+  const query = state.autoQuery;
+  if (!$('#autoSendCheck').checked || !query.inFlight) return;
+  const token = query.activeToken;
+  if (!isActiveAutoQuery(token)) return;
+  query.responses += 1;
+  query.responseReceived = true;
+  if (query.sendSettled) finishAutoQuery(token, '已收到应答');
+  else updateAutoSendStatus(`自动查询 #${query.sequence}：已收到应答，等待发送确认（在途 1）`);
+}
+
+function isActiveAutoQuery(token) {
+  return state.autoQuery.inFlight && state.autoQuery.activeToken === token;
+}
+
+function onAutoQueryTimeout(token) {
+  const query = state.autoQuery;
+  if (!isActiveAutoQuery(token) || query.responseReceived) return;
+  query.timeoutTimer = null;
+  query.timeouts += 1;
+  query.timeoutObserved = true;
+  addSystemLog(`自动查询 #${query.sequence} 应答超时（${autoQueryTimeout()} ms）`);
+  if (query.sendSettled) finishAutoQuery(token, '应答超时');
+  else updateAutoSendStatus(`自动查询 #${query.sequence}：应答超时，等待发送确认（在途 1）`);
+}
+
+function finishAutoQuery(token, reason) {
+  const query = state.autoQuery;
+  if (!isActiveAutoQuery(token)) return;
+  if (query.timeoutTimer) window.clearTimeout(query.timeoutTimer);
+  query.timeoutTimer = null;
+  query.inFlight = false;
+  query.activeToken = 0;
+  query.sendSettled = false;
+  query.responseReceived = false;
+  query.timeoutObserved = false;
+  const elapsed = Math.max(0, performance.now() - query.startedAt);
+  updateAutoSendStatus(`自动查询 #${query.sequence}${reason}（在途 0，耗时 ${Math.round(elapsed)} ms）`);
+  scheduleAutoQuery(Math.max(0, autoQueryInterval() - elapsed));
+}
+
 async function exportLog() {
-  const lines = state.logs.map((row) => [row.time, row.direction, row.bytes, row.text, row.hex].map(csvCell).join(','));
-  const content = `time,direction,bytes,text,hex\n${lines.join('\n')}`;
+  const lines = state.logs.map((row) => [row.sequence, row.time, row.direction, row.bytes, row.text, row.hex].map(csvCell).join(','));
+  const content = `sequence,time,direction,bytes,text,hex\n${lines.join('\n')}`;
   if (window.serialScope.saveTextFile) {
     const result = await window.serialScope.saveTextFile({
       title: '导出串口日志',
@@ -1547,7 +2287,7 @@ function resetRuleHits() {
     rule.hits = 0;
   }
   state.metrics.ruleHits = 0;
-  $('#ruleHits').textContent = '0';
+  setText('#ruleHits', '0');
   renderRules();
 }
 
@@ -1569,7 +2309,7 @@ function recomputeRuleHits() {
     row.rules = matched;
     row.hit = matched.length > 0;
   }
-  $('#ruleHits').textContent = state.metrics.ruleHits;
+  setText('#ruleHits', state.metrics.ruleHits);
   renderRules();
 }
 
@@ -1600,6 +2340,13 @@ function dateStamp() {
     pad(now.getMinutes()),
     pad(now.getSeconds())
   ].join('');
+}
+
+function formatLogTime(timestamp) {
+  const candidate = timestamp ? new Date(timestamp) : new Date();
+  const date = Number.isNaN(candidate.getTime()) ? new Date() : candidate;
+  const pad = (value, width = 2) => String(value).padStart(width, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(date.getMilliseconds(), 3)}`;
 }
 
 function formatBytes(value) {

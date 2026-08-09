@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "adopt-desktop-menu-toolbar",
+  "title": "Adopt desktop menu and toolbar navigation",
+  "riskTier": "L2",
+  "state": "review-passed",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}

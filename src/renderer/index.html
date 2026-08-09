@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src ws://127.0.0.1:47990; img-src 'self' data:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SerialScope</title>
@@ -21,20 +21,12 @@
           </div>
         </header>
 
-        <nav class="page-nav" aria-label="功能页面">
-          <button class="nav-item active" data-page-target="page-terminal" type="button">串口调试</button>
-          <button class="nav-item" data-page-target="page-trend" type="button">趋势监视</button>
-          <button class="nav-item" data-page-target="page-rules" type="button">规则配置</button>
-          <button class="nav-item" data-page-target="page-macros" type="button">宏命令</button>
-        </nav>
-
         <section class="sidebar-card">
           <div class="panel-title">
             <span>后端</span>
             <strong id="backendState">后端连接中</strong>
           </div>
-          <button id="startBackendButton" class="secondary-button" type="button">启动后端</button>
-          <button id="refreshPortsButton" type="button">刷新串口</button>
+          <p class="sidebar-copy">连接、收发和配置操作位于原生菜单栏；工作区专注于报文查看与编辑。</p>
         </section>
 
         <section class="sidebar-card">
@@ -42,9 +34,7 @@
             <span>预设</span>
             <strong id="profileName">默认调试</strong>
           </div>
-          <button id="saveProfileButton" type="button">保存当前配置</button>
-          <button id="loadProfileButton" type="button">加载配置</button>
-          <button id="openRuleConfigButton" type="button">配置高亮规则</button>
+          <p class="sidebar-copy">当前配置会保留宏、规则与模拟下位机设置。</p>
         </section>
 
         <section class="sidebar-card">
@@ -52,7 +42,6 @@
             <span>布局</span>
             <strong>本地保存</strong>
           </div>
-          <button id="resetLayoutButton" type="button">恢复默认布局</button>
           <div id="hiddenPanelList" class="hidden-panel-list"></div>
         </section>
       </aside>
@@ -71,31 +60,14 @@
           </div>
         </header>
 
-        <section class="metrics-grid">
-          <div class="metric-card">
-            <span>接收速率</span>
-            <strong id="rxRate">0 B/s</strong>
-          </div>
-          <div class="metric-card">
-            <span>发送速率</span>
-            <strong id="txRate">0 B/s</strong>
-          </div>
-          <div class="metric-card">
-            <span>最近帧长度</span>
-            <strong id="lastFrameBytes">0 B</strong>
-          </div>
-          <div class="metric-card">
-            <span>规则命中</span>
-            <strong id="ruleHits">0</strong>
-          </div>
-        </section>
-
-        <section id="page-terminal" class="page active" data-page-title="工业级串口调试台" data-page-eyebrow="串口调试 / 协议分析 / 数据记录">
-          <div id="terminalDock" class="dock-layout" style="--left-panel: 300px; --right-panel: 340px; --bottom-panel: 230px;">
-            <section class="dock-panel connection-panel" data-panel-id="connection" data-panel-name="连接参数">
+        <section id="page-serial-config" class="page" data-page-title="串口配置" data-page-eyebrow="连接参数 / 接收分帧 / 串口控制">
+          <section class="dock-panel serial-config-panel">
               <header class="dock-header">
-                <span>连接参数</span>
-                <button class="panel-toggle" data-hide-panel="connection" type="button">隐藏</button>
+                <span>串口连接参数</span>
+                <div class="dock-actions">
+                  <strong id="configSerialState">请配置后打开</strong>
+                  <button id="refreshConfigPortsButton" type="button">刷新串口</button>
+                </div>
               </header>
               <div class="dock-content form-stack">
                 <label>
@@ -152,14 +124,42 @@
                     <option value="software">XON/XOFF</option>
                   </select>
                 </label>
+                <label>
+                  <span>接收分帧</span>
+                  <select id="frameModeSelect">
+                    <option value="raw" selected>原始读取块</option>
+                    <option value="delimiter">按分隔符</option>
+                    <option value="fixed">定长帧</option>
+                  </select>
+                </label>
+                <label>
+                  <span>分隔符</span>
+                  <select id="frameDelimiterSelect">
+                    <option value="LF" selected>LF (0A)</option>
+                    <option value="CRLF">CRLF (0D 0A)</option>
+                    <option value="CR">CR (0D)</option>
+                    <option value="HEX:00">HEX:00</option>
+                    <option value="custom">自定义 HEX</option>
+                  </select>
+                </label>
+                <label id="frameDelimiterHexField" hidden>
+                  <span>HEX 分隔符</span>
+                  <input id="frameDelimiterHexInput" type="text" value="0D 0A" placeholder="例如 0D 0A" spellcheck="false" />
+                </label>
+                <label id="frameSizeField" hidden>
+                  <span>帧长度（字节）</span>
+                  <input id="frameSizeInput" type="number" min="1" max="131072" value="8" step="1" />
+                </label>
                 <div class="button-row">
                   <button id="openButton" class="primary-button" type="button">打开</button>
                   <button id="closeButton" type="button">关闭</button>
                 </div>
               </div>
-            </section>
+          </section>
+        </section>
 
-            <div class="splitter splitter-vertical" data-splitter="left" role="separator" aria-orientation="vertical"></div>
+        <section id="page-terminal" class="page active" data-page-title="工业级串口调试台" data-page-eyebrow="串口调试 / 协议分析 / 数据记录">
+          <div id="terminalDock" class="dock-layout terminal-only-layout" style="--right-panel: 340px; --bottom-panel: 230px;">
 
             <section class="dock-panel terminal-panel" data-panel-id="terminal" data-panel-name="收发监视">
               <header class="dock-header">
@@ -238,9 +238,14 @@
                   <label class="check-label"><input id="crcCheck" type="checkbox" /> 追加 Modbus CRC16</label>
                   <label class="check-label"><input id="autoSendCheck" type="checkbox" /> 自动发送</label>
                   <label>
-                    <span>周期 ms</span>
-                    <input id="autoSendInterval" type="number" min="50" step="50" value="1000" />
+                    <span>最小周期 ms</span>
+                    <input id="autoSendInterval" type="number" min="10" step="10" value="1000" />
                   </label>
+                  <label>
+                    <span>应答超时 ms</span>
+                    <input id="autoSendTimeout" type="number" min="10" step="10" value="500" />
+                  </label>
+                  <span id="autoSendStatus" class="auto-send-status" data-inflight="0">自动查询已停止</span>
                   <button id="sendButton" class="primary-button" type="button">发送</button>
                 </div>
               </div>
@@ -330,10 +335,64 @@
           <section class="dock-panel macro-panel">
             <header class="dock-header">
               <span>宏命令</span>
-              <strong>一键发送</strong>
+              <div class="dock-actions">
+                <strong>一键发送</strong>
+                <button id="newMacroButton" class="text-button" type="button">新建</button>
+              </div>
             </header>
-            <div id="macroGrid" class="macro-grid"></div>
+            <div class="macro-workspace">
+              <div id="macroGrid" class="macro-grid"></div>
+              <section class="macro-editor">
+                <header><strong>宏编辑器</strong><span id="macroEditorHint">选择或新建一条宏</span></header>
+                <label><span>名称</span><input id="macroNameInput" type="text" maxlength="80" placeholder="例如：读取版本" /></label>
+                <label><span>模式</span><select id="macroModeSelect"><option value="text">Text</option><option value="hex">HEX</option></select></label>
+                <label><span>数据</span><textarea id="macroDataInput" rows="6" spellcheck="false" placeholder="文本或十六进制字节"></textarea></label>
+                <label><span>行尾</span><select id="macroLineEndingSelect"><option value="none">None</option><option value="CR">CR</option><option value="LF">LF</option><option value="CRLF">CRLF</option></select></label>
+                <label class="check-label"><input id="macroCrcCheck" type="checkbox" /> 追加 Modbus CRC16</label>
+                <div class="button-row"><button id="saveMacroButton" class="primary-button" type="button">保存宏</button><button id="deleteMacroButton" class="danger-button" type="button">删除</button></div>
+              </section>
+            </div>
           </section>
+        </section>
+
+        <section id="page-simulator" class="page" data-page-title="模拟下位机" data-page-eyebrow="接收报文 / 规约应答 / 自定义规则">
+          <div class="page-grid simulator-grid">
+            <section class="dock-panel">
+              <header class="dock-header">
+                <span>应答控制</span>
+                <label class="check-label"><input id="simulatorEnabledCheck" type="checkbox" /> 启用模拟下位机</label>
+              </header>
+              <div class="dock-content form-stack">
+                <label>
+                  <span>内置规约</span>
+                  <select id="simulatorBuiltinSelect">
+                    <option value="none">不启用</option>
+                    <option value="echo">原样回显（Echo）</option>
+                    <option value="at">AT 命令（OK / 版本）</option>
+                    <option value="modbus">Modbus RTU 从站（03 / 04 / 06 / 16）</option>
+                  </select>
+                </label>
+                <label>
+                  <span>应答延迟（ms）</span>
+                  <input id="simulatorDelayInput" type="number" min="0" max="10000" value="20" />
+                </label>
+                <div class="help-copy">
+                  <p>在第二个 SerialScope 实例打开虚拟串口的另一端后启用。收到 RX 帧时，本实例会按内置规约或首个匹配的自定义规则回复。</p>
+                  <p>Modbus 读寄存器的返回值是每次生成的随机 16 位数据；写单/多寄存器按标准回显地址和数量。</p>
+                </div>
+                <strong id="simulatorStatus">模拟下位机未启用</strong>
+              </div>
+            </section>
+            <section class="dock-panel">
+              <header class="dock-header">
+                <span>自定义收发规则</span>
+                <button id="addSimulatorRuleButton" class="primary-button" type="button">新增规则</button>
+              </header>
+              <div class="help-copy"><p>“收到 HEX”使用完整、空格分隔的十六进制帧；<code>*</code> 匹配所有帧。回复中的 <code>{{RAND8}}</code>、<code>{{RAND16LE}}</code>、<code>{{RAND16BE}}</code>、<code>{{RANDHEX:n}}</code> 会在每次发送时替换为随机字节。</p></div>
+              <div id="simulatorRuleList" class="simulator-rule-list"></div>
+              <footer class="dock-actions simulator-actions"><button id="saveSimulatorButton" class="primary-button" type="button">保存模拟配置</button></footer>
+            </section>
+          </div>
         </section>
       </main>
     </div>

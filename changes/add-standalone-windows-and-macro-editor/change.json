@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "add-standalone-windows-and-macro-editor",
+  "title": "Add standalone module windows and macro editor",
+  "riskTier": "L2",
+  "state": "review-passed",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}

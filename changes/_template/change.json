@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "replace-with-kebab-case-change-id",
+  "title": "Replace with a concise change title",
+  "riskTier": "L2",
+  "state": "draft",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}

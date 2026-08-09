@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "serialize-auto-query-timing",
+  "title": "Serialize automatic serial queries and retain millisecond timing evidence",
+  "riskTier": "L3",
+  "state": "review-passed",
+  "owner": "implementer",
+  "reviewMode": "P",
+  "archiveRequiresHumanConfirmation": true
+}

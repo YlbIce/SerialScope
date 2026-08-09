@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "migrate-renderer-to-react",
+  "title": "Migrate the Electron renderer to React and Vite",
+  "riskTier": "L2",
+  "state": "draft",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}

@@ -1,5 +1,6 @@
 node_modules/
 dist/
+src/renderer-dist/
 release/
 backend/build/
 backend/build-*/
@@ -15,3 +16,5 @@ backend/bin/
 *.exe
 *.dll
 *.dSYM/
+artifacts/
+.vscode/

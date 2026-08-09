@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "workflowId": "serialscope-plan-tdd",
+  "description": "Risk-tiered Plan + tests-first workflow for SerialScope changes.",
+  "autoFix": {
+    "status": "deferred",
+    "productionActionAllowed": false,
+    "realDeviceWriteAllowed": false
+  },
+  "stages": [
+    {
+      "id": "requirements",
+      "inputs": ["user-request", "change-id", "risk-tier"],
+      "outputs": ["proposal.md"],
+      "gate": "goal-non-goals-acceptance-written",
+      "exitCriteria": ["risk tier is stated", "goal and non-goals are written", "acceptance scenarios are listed"]
+    },
+    {
+      "id": "plan",
+      "inputs": ["proposal.md"],
+      "outputs": ["design.md", "specification.md", "tasks.md"],
+      "gate": "scenario-verification-mapping-exists",
+      "exitCriteria": ["each acceptance maps to a test, inspection, or explicit not-run reason"]
+    },
+    {
+      "id": "tests-first",
+      "inputs": ["tasks.md"],
+      "outputs": ["failing-or-gap-evidence"],
+      "gate": "required-behavior-is-observable",
+      "exitCriteria": ["a mapped test fails before the fix, or a documented checklist explains why RED is not applicable"]
+    },
+    {
+      "id": "implementation",
+      "inputs": ["design.md", "specification.md", "tasks.md"],
+      "outputs": ["scoped-code-or-process-changes"],
+      "gate": "single-writer-and-scoped-diff",
+      "exitCriteria": ["diff stays within the approved scope", "no unapproved real-device write or permission expansion"]
+    },
+    {
+      "id": "verify",
+      "inputs": ["scoped-code-or-process-changes"],
+      "outputs": ["evidence.md"],
+      "gate": "evidence-is-machine-readable-and-honest",
+      "exitCriteria": ["npm run process:check passes", "each verification has command, kind, and status", "uncovered items are explicit"]
+    },
+    {
+      "id": "review",
+      "inputs": ["change-package", "evidence.md"],
+      "outputs": ["review-decision"],
+      "gate": "independent-read-only-review-for-l2-l3",
+      "exitCriteria": ["P1/P2 are classified", "review-passed is not treated as archive"]
+    }
+  ],
+  "notes": [
+    "L0/L1 use the abbreviated path in AGENTS.md.",
+    "Real serial-device writes require an L3 human gate."
+  ]
+}

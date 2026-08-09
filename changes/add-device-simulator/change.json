@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "add-device-simulator",
+  "title": "Add simulated lower-device responses",
+  "riskTier": "L2",
+  "state": "review-passed",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}

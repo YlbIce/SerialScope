@@ -5,11 +5,29 @@
   "main": "src/main/main.js",
   "private": true,
   "scripts": {
-    "dev": "node scripts/run-electron.js --dev",
-    "start": "node scripts/run-electron.js",
+    "build:renderer": "vite build",
+    "dev": "npm run build:renderer && node scripts/run-electron.js --dev",
+    "start": "npm run build:renderer && node scripts/run-electron.js",
     "mock:backend": "node scripts/mock-backend.js",
     "build:backend": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
-    "check": "node --check src/main/main.js && node --check src/main/preload.js && node --check src/renderer/renderer.js && node --check scripts/run-electron.js && node --check scripts/mock-backend.js"
+    "check": "node --check src/main/main.js && node --check src/main/preload.js && node --check src/renderer/renderer.js && node --check scripts/run-electron.js && node --check scripts/mock-backend.js",
+    "process:check": "node scripts/check-process.js",
+    "test:named-pipe": "node scripts/test-named-pipe.js && node scripts/test-main-named-pipe-client.js && node scripts/test-named-pipe-boundary.js && node scripts/test-named-pipe-ready-timeout.js",
+    "test:named-pipe-serial": "node scripts/test-named-pipe-serial.js",
+    "test:named-pipe-fixed-frame": "node scripts/test-named-pipe-fixed-frame.js",
+    "test:named-pipe-outbound-boundary": "node scripts/test-named-pipe-outbound-boundary.js",
+    "test:named-pipe-single-client": "node scripts/test-named-pipe-single-client.js",
+    "test:electron-ui": "node scripts/run-electron-ui-smoke.js",
+    "test:production-simulator": "node scripts/test-production-simulator-ownership.js",
+    "test:auto-query-timing": "node scripts/test-auto-query-timing.js",
+    "test:auto-query-backpressure-ui": "node scripts/test-auto-query-backpressure-ui.js",
+    "test:log-export-contract": "node scripts/test-log-export-contract.js",
+    "test:react-workbench-ui": "npm run build:renderer && electron scripts/test-react-workbench-ui.js",
+    "test:flow-runtime": "node scripts/test-flow-runtime.mjs",
+    "test:device-workbench": "node scripts/test-device-workbench.mjs",
+    "test:workbench-authorization": "node scripts/test-workbench-execution-authorization.js",
+    "test:virtual-simulator-port": "node scripts/test-virtual-simulator-port.js",
+    "test:workbench-dual-simulator": "npm run build:renderer && electron scripts/test-workbench-dual-simulator.js"
   },
   "keywords": [
     "cserialport",
@@ -21,6 +39,13 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^39.8.10"
+    "@vitejs/plugin-react": "^5.1.1",
+    "electron": "^39.8.10",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.10.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
   }
 }

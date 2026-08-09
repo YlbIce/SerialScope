@@ -16,7 +16,10 @@ std::string dumpJson(const Json& message) {
 }
 
 std::string requestIdOf(const Json& command) {
-  return command.value("requestId", "");
+  if (command.contains("requestId") && command.at("requestId").is_string()) {
+    return command.at("requestId").get<std::string>();
+  }
+  return {};
 }
 
 } // namespace
@@ -63,8 +66,12 @@ void WebSocketServer::acceptNext() {
 
 void WebSocketServer::broadcast(const Json& message) {
   const std::string text = dumpJson(message);
+  const std::string type = message.value("type", std::string());
+  const auto delivery = type == "serial:rx" || type == "serial:tx"
+    ? WebSocketSession::DeliveryClass::Realtime
+    : WebSocketSession::DeliveryClass::Control;
   for (const auto& client : clients_) {
-    client->send(text);
+    client->send(text, delivery);
   }
 }
 
@@ -83,41 +90,57 @@ void WebSocketServer::routeCommand(const std::shared_ptr<WebSocketSession>& clie
   }
 
   const std::string requestId = requestIdOf(command);
-  const std::string type = command.value("type", "");
-  const Json payload = command.value("payload", Json::object());
-
-  if (type == "ports:list") {
-    sendTo(client, protocol::makeOk(requestId, "ports:list", listSerialPorts()));
+  if (!command.contains("type") || !command.at("type").is_string()) {
+    sendTo(client, protocol::makeError(requestId, "命令 type 必须是字符串"));
     return;
   }
 
-  if (type == "serial:open") {
-    sendTo(client, protocol::makeOk(requestId, "serial:open:result", serial_->open(payload)));
-    return;
+  const std::string type = command.at("type").get<std::string>();
+  Json payload = Json::object();
+  if (command.contains("payload")) {
+    payload = command.at("payload");
+    if (!payload.is_object()) {
+      sendTo(client, protocol::makeError(requestId, "命令 payload 必须是 JSON 对象"));
+      return;
+    }
   }
 
-  if (type == "serial:close") {
-    sendTo(client, protocol::makeOk(requestId, "serial:close:result", serial_->close()));
-    return;
-  }
+  try {
+    if (type == "ports:list") {
+      sendTo(client, protocol::makeOk(requestId, "ports:list", listSerialPorts()));
+      return;
+    }
 
-  if (type == "serial:send") {
-    sendTo(client, protocol::makeOk(requestId, "serial:send:result", serial_->sendPayload(payload)));
-    return;
-  }
+    if (type == "serial:open") {
+      sendTo(client, protocol::makeOk(requestId, "serial:open:result", serial_->open(payload)));
+      return;
+    }
 
-  if (type == "backend:shutdown") {
-    sendTo(client, protocol::makeOk(requestId, "backend:shutdown:result", {{"ok", true}}));
-    auto timer = std::make_shared<asio::steady_timer>(io_, std::chrono::milliseconds(150));
-    timer->async_wait([this, timer](boost::system::error_code) {
-      boost::system::error_code ignored;
-      acceptor_.close(ignored);
-      io_.stop();
-    });
-    return;
-  }
+    if (type == "serial:close") {
+      sendTo(client, protocol::makeOk(requestId, "serial:close:result", serial_->close()));
+      return;
+    }
 
-  sendTo(client, protocol::makeError(requestId, "未知命令：" + type));
+    if (type == "serial:send") {
+      sendTo(client, protocol::makeOk(requestId, "serial:send:result", serial_->sendPayload(payload)));
+      return;
+    }
+
+    if (type == "backend:shutdown") {
+      sendTo(client, protocol::makeOk(requestId, "backend:shutdown:result", {{"ok", true}}));
+      auto timer = std::make_shared<asio::steady_timer>(io_, std::chrono::milliseconds(150));
+      timer->async_wait([this, timer](boost::system::error_code) {
+        boost::system::error_code ignored;
+        acceptor_.close(ignored);
+        io_.stop();
+      });
+      return;
+    }
+
+    sendTo(client, protocol::makeError(requestId, "未知命令：" + type));
+  } catch (const std::exception& error) {
+    sendTo(client, protocol::makeError(requestId, std::string("命令处理失败：") + error.what()));
+  }
 }
 
 void WebSocketServer::remove(const std::shared_ptr<WebSocketSession>& client) {
@@ -139,6 +162,7 @@ WebSocketSession::WebSocketSession(TcpSocket socket, std::weak_ptr<WebSocketServ
 void WebSocketSession::start() {
   auto self = shared_from_this();
   ws_.set_option(websocket::stream_base::timeout::suggested(beast::role_type::server));
+  ws_.read_message_max(kMaxIncomingMessageBytes);
   ws_.set_option(websocket::stream_base::decorator([](websocket::response_type& response) {
     response.set(beast::http::field::server, "SerialScope Native Backend");
   }));
@@ -167,14 +191,38 @@ void WebSocketSession::start() {
   });
 }
 
-void WebSocketSession::send(const std::string& message) {
+void WebSocketSession::send(const std::string& message, DeliveryClass delivery) {
   auto self = shared_from_this();
-  asio::post(ws_.get_executor(), [this, self, message] {
-    const bool busy = !outgoing_.empty();
-    outgoing_.push_back(message);
-    if (!busy) {
-      writeNext();
+  asio::post(ws_.get_executor(), [this, self, message, delivery] {
+    if (closingForOverload_) {
+      return;
     }
+
+    const std::size_t messageBytes = message.size();
+    if (delivery == DeliveryClass::Realtime) {
+      if (messageBytes <= kMaxRealtimeBytes
+          && realtimeOutgoing_.size() < kMaxRealtimeMessages
+          && realtimeOutgoingBytes_ + messageBytes <= kMaxRealtimeBytes) {
+        realtimeOutgoing_.push_back(message);
+        realtimeOutgoingBytes_ += messageBytes;
+        writeNext();
+        return;
+      }
+      droppedMessages_ += 1;
+      droppedBytes_ += messageBytes;
+      return;
+    }
+
+    if (messageBytes > kMaxControlBytes
+        || controlOutgoing_.size() >= kMaxControlMessages
+        || controlOutgoingBytes_ + messageBytes > kMaxControlBytes) {
+      closeForOverload();
+      return;
+    }
+
+    controlOutgoing_.push_back(message);
+    controlOutgoingBytes_ += messageBytes;
+    writeNext();
   });
 }
 
@@ -198,13 +246,27 @@ void WebSocketSession::readNext() {
 }
 
 void WebSocketSession::writeNext() {
-  if (outgoing_.empty()) {
+  if (writeInProgress_) {
     return;
   }
 
+  enqueueBackpressureNotice();
+  std::deque<std::string>* queue = nullptr;
+  if (!controlOutgoing_.empty()) {
+    writingClass_ = DeliveryClass::Control;
+    queue = &controlOutgoing_;
+  } else if (!realtimeOutgoing_.empty()) {
+    writingClass_ = DeliveryClass::Realtime;
+    queue = &realtimeOutgoing_;
+  }
+  if (queue == nullptr) {
+    return;
+  }
+
+  writeInProgress_ = true;
   auto self = shared_from_this();
   ws_.text(true);
-  ws_.async_write(asio::buffer(outgoing_.front()), [this, self](boost::system::error_code ec, std::size_t) {
+  ws_.async_write(asio::buffer(queue->front()), [this, self](boost::system::error_code ec, std::size_t) {
     if (ec) {
       if (auto server = server_.lock()) {
         server->remove(self);
@@ -212,7 +274,46 @@ void WebSocketSession::writeNext() {
       return;
     }
 
-    outgoing_.pop_front();
+    auto& writtenQueue = writingClass_ == DeliveryClass::Control ? controlOutgoing_ : realtimeOutgoing_;
+    auto& writtenBytes = writingClass_ == DeliveryClass::Control ? controlOutgoingBytes_ : realtimeOutgoingBytes_;
+    writtenBytes -= writtenQueue.front().size();
+    writtenQueue.pop_front();
+    writeInProgress_ = false;
     writeNext();
   });
+}
+
+void WebSocketSession::enqueueBackpressureNotice() {
+  if (droppedMessages_ == 0 || controlOutgoing_.size() >= kMaxControlMessages) {
+    return;
+  }
+
+  const std::string notice = dumpJson({
+    {"type", "backend:backpressure"},
+    {"payload", {
+      {"droppedMessages", droppedMessages_},
+      {"droppedBytes", droppedBytes_},
+      {"message", "客户端处理过慢，部分实时事件已丢弃"}
+    }}
+  });
+  if (controlOutgoingBytes_ + notice.size() > kMaxControlBytes) {
+    return;
+  }
+
+  controlOutgoing_.push_back(notice);
+  controlOutgoingBytes_ += notice.size();
+  droppedMessages_ = 0;
+  droppedBytes_ = 0;
+}
+
+void WebSocketSession::closeForOverload() {
+  if (closingForOverload_) {
+    return;
+  }
+  closingForOverload_ = true;
+  boost::system::error_code ignored;
+  ws_.next_layer().close(ignored);
+  if (auto server = server_.lock()) {
+    server->remove(shared_from_this());
+  }
 }

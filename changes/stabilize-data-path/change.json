@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "stabilize-data-path",
+  "title": "Bound data delivery and stabilize renderer sessions",
+  "riskTier": "L2",
+  "state": "archived",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true,
+  "review": {
+    "result": "approved",
+    "reviewRound": 4,
+    "p1": 0,
+    "p2": 0
+  },
+  "archive": {
+    "approvedBy": "user",
+    "approval": "确认",
+    "proof": "changes/stabilize-data-path/archive.md"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "validate-visible-ui-and-hardware",
+  "title": "Validate visible desktop UI and physical serial hardware",
+  "riskTier": "L3",
+  "state": "implementing",
+  "owner": "implementer",
+  "reviewMode": "P",
+  "archiveRequiresHumanConfirmation": true
+}

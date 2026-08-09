@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "migrate-named-pipe-json-rpc",
+  "title": "Migrate backend IPC to Named Pipe JSON-RPC",
+  "riskTier": "L3",
+  "state": "implementing",
+  "owner": "implementer",
+  "reviewMode": "P",
+  "archiveRequiresHumanConfirmation": true
+}

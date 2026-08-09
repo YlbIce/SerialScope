@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "extract-serial-config-window",
+  "title": "Extract serial settings into a standalone window",
+  "riskTier": "L2",
+  "state": "review-passed",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}
