@@ -88,6 +88,136 @@ int main() {
   const auto maximumFixedResult = maximumFixed->push(protocol::Bytes(FrameDecoder::kMaxFixedFrameBytes, 0xFF));
   require(maximumFixedResult.frames.size() == 1 && maximumFixedResult.frames[0].size() == FrameDecoder::kMaxFixedFrameBytes, "最大 fixed 帧必须完整发出");
 
+  // ---- Length 模式：完整帧 ----
+  {
+    FrameDecoderConfig config;
+    config.mode = FrameMode::Length;
+    config.header = {0xAA, 0x55};
+    config.lengthFieldOffset = 2;
+    config.lengthFieldSize = 1;
+    config.lengthIncludesHeader = false;
+    config.lengthEndian = LengthEndian::Little;
+    config.maxFrameSize = 64;
+    auto decoder = std::make_unique<FrameDecoder>();
+    decoder->configure(config);
+    auto result = decoder->push({0xAA, 0x55, 0x02, 0x11, 0x22});
+    require(!result.overflowed && result.frames.size() == 1, "Length 完整帧应输出一帧");
+    require(result.frames[0] == protocol::Bytes({0xAA, 0x55, 0x02, 0x11, 0x22}), "Length 完整帧内容错误");
+  }
+
+  // ---- Length 模式：粘包多帧 ----
+  {
+    FrameDecoderConfig config;
+    config.mode = FrameMode::Length;
+    config.header = {0xAA, 0x55};
+    config.lengthFieldOffset = 2;
+    config.lengthFieldSize = 1;
+    config.lengthIncludesHeader = false;
+    config.lengthEndian = LengthEndian::Little;
+    config.maxFrameSize = 64;
+    auto decoder = std::make_unique<FrameDecoder>();
+    decoder->configure(config);
+    auto result = decoder->push({0xAA, 0x55, 0x02, 0x11, 0x22, 0xAA, 0x55, 0x01, 0xFF});
+    require(!result.overflowed && result.frames.size() == 2, "Length 粘包应输出两帧");
+    require(result.frames[0] == protocol::Bytes({0xAA, 0x55, 0x02, 0x11, 0x22}), "Length 粘包第一帧错误");
+    require(result.frames[1] == protocol::Bytes({0xAA, 0x55, 0x01, 0xFF}), "Length 粘包第二帧错误");
+  }
+
+  // ---- Length 模式：半包跨 push ----
+  {
+    FrameDecoderConfig config;
+    config.mode = FrameMode::Length;
+    config.header = {0xAA, 0x55};
+    config.lengthFieldOffset = 2;
+    config.lengthFieldSize = 1;
+    config.lengthIncludesHeader = false;
+    config.lengthEndian = LengthEndian::Little;
+    config.maxFrameSize = 64;
+    auto decoder = std::make_unique<FrameDecoder>();
+    decoder->configure(config);
+    auto first = decoder->push({0xAA, 0x55, 0x02, 0x11});
+    require(!first.overflowed && first.frames.empty(), "Length 半包首推不得输出帧");
+    auto second = decoder->push({0x22});
+    require(!second.overflowed && second.frames.size() == 1, "Length 半包补齐后应输出一帧");
+    require(second.frames[0] == protocol::Bytes({0xAA, 0x55, 0x02, 0x11, 0x22}), "Length 半包帧内容错误");
+  }
+
+  // ---- Length 模式：includesHeader=true ----
+  {
+    FrameDecoderConfig config;
+    config.mode = FrameMode::Length;
+    config.header = {0xAA};
+    config.lengthFieldOffset = 1;
+    config.lengthFieldSize = 1;
+    config.lengthIncludesHeader = true;
+    config.lengthEndian = LengthEndian::Little;
+    config.maxFrameSize = 64;
+    auto decoder = std::make_unique<FrameDecoder>();
+    decoder->configure(config);
+    auto result = decoder->push({0xAA, 0x04, 0x01, 0x02});
+    require(!result.overflowed && result.frames.size() == 1, "Length includesHeader 应输出一帧");
+    require(result.frames[0] == protocol::Bytes({0xAA, 0x04, 0x01, 0x02}), "Length includesHeader 帧内容错误");
+  }
+
+  // ---- Length 模式：2 字节大端 ----
+  {
+    FrameDecoderConfig config;
+    config.mode = FrameMode::Length;
+    config.header = {0xAA};
+    config.lengthFieldOffset = 1;
+    config.lengthFieldSize = 2;
+    config.lengthIncludesHeader = false;
+    config.lengthEndian = LengthEndian::Big;
+    config.maxFrameSize = 64;
+    auto decoder = std::make_unique<FrameDecoder>();
+    decoder->configure(config);
+    auto result = decoder->push({0xAA, 0x00, 0x02, 0x01, 0x02});
+    require(!result.overflowed && result.frames.size() == 1, "Length 大端应输出一帧");
+    require(result.frames[0] == protocol::Bytes({0xAA, 0x00, 0x02, 0x01, 0x02}), "Length 大端帧内容错误");
+  }
+
+  // ---- Length 模式：超限帧丢弃后恢复 ----
+  {
+    FrameDecoderConfig config;
+    config.mode = FrameMode::Length;
+    config.header = {0xAA, 0x55};
+    config.lengthFieldOffset = 2;
+    config.lengthFieldSize = 1;
+    config.lengthIncludesHeader = false;
+    config.lengthEndian = LengthEndian::Little;
+    config.maxFrameSize = 5;
+    auto decoder = std::make_unique<FrameDecoder>();
+    decoder->configure(config);
+    auto result = decoder->push({0xAA, 0x55, 0x63, 0x01, 0xAA, 0x55, 0x02, 0x0A, 0x0B});
+    require(result.overflowed, "Length 超限帧必须置 overflowed");
+    require(result.frames.size() == 1, "Length 超限后应输出后续正常帧");
+    require(result.frames[0] == protocol::Bytes({0xAA, 0x55, 0x02, 0x0A, 0x0B}), "Length 超限后恢复帧内容错误");
+  }
+
+  // ---- Length 模式：非法配置防御 ----
+  {
+    FrameDecoderConfig config;
+    config.mode = FrameMode::Length;
+    config.header = {};  // 空 header
+    config.lengthFieldSize = 1;
+    config.maxFrameSize = 64;
+    auto decoder = std::make_unique<FrameDecoder>();
+    decoder->configure(config);
+    auto result = decoder->push({0x01, 0x02});
+    require(result.overflowed && result.frames.empty(), "Length 空 header 必须防御性拒绝");
+  }
+  {
+    FrameDecoderConfig config;
+    config.mode = FrameMode::Length;
+    config.header = {0xAA};
+    config.lengthFieldSize = 3;  // 非法宽度
+    config.maxFrameSize = 64;
+    auto decoder = std::make_unique<FrameDecoder>();
+    decoder->configure(config);
+    auto result = decoder->push({0xAA, 0x01, 0x02});
+    require(result.overflowed && result.frames.empty(), "Length 非法 lengthFieldSize 必须防御性拒绝");
+  }
+
   std::cout << "FrameDecoder tests passed\n";
   return 0;
 }
