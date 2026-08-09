@@ -16,6 +16,14 @@
 
 ## 条目
 
+## 2026-08-09 · L3 · add-deepseek-provider（G3 ready-for-review，真实调用待用户 Key，未归档）
+
+- 需求来源：用户要求接入真实 DeepSeek provider（G1：方案A Node 调用/userData 明文/含串口数据/Key 用环境变量）。
+- 实现：`deepseek-provider.js`（Node https 调 DeepSeek Chat Completions，无新依赖）；`ai-config.js`（持久化 provider/enabled/allowDataUpload 到 userData/ai-config.json，**API Key 不落盘**，从环境变量 DEEPSEEK_API_KEY 或运行时内存）；main.js `ai.parseProtocol`/`ai.generateCommands` 在 `useDeepSeek()`（provider=deepseek+enabled+Key+allowDataUpload）时调 DeepSeek，否则回退后端 mock；`ai:config` IPC；前端 AI 配置窗口 + includeSerialData 标志。解决 G2 两个 P2（Main 分发点、allowDataUpload 一致性）。
+- 验证：`npm run test:deepseek`（无 Key）passed（配置持久化不含 Key、useDeepSeek、禁止上传拒绝、无 Key 抛 no-api-key）；真实 DeepSeek 端到端 **blocked**（需 DEEPSEEK_API_KEY 环境变量，用户本机运行）；既有 ai-rpc/mcp/import 测试 passed（无回归）；`npm run check`、`npm run process:check`（22 个活动 change）passed。
+- 风险与后续：真实调用需用户设 DEEPSEEK_API_KEY 运行 `npm run test:deepseek`；上传规约+串口数据到云端为数据外泄（用户授权）；提示词质量影响准确率。L3 保持 ready-for-review（G3），不得自动归档。
+- 关联：`changes/add-deepseek-provider/`；提交 `81f8f67`，推送 `origin/master`。
+
 ## 2026-08-09 · L2 · add-protocol-import（ready-for-review，未归档）+ MCP UI 修复
 
 - 需求来源：用户反馈 3 项——MCP 启动没反应、无 AI API Key 配置窗口、需支持 Word/PDF 规约导入。
