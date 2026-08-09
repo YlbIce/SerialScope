@@ -2063,6 +2063,41 @@ function handleUiAction(detail) {
   if (action === 'reset-layout') return resetLayout();
   if (action === 'edit-rules') return openRuleConfig();
   if (action === 'about') return showToast('SerialScope Native · Named Pipe + JSON-RPC');
+  if (action === 'mcp-started') return handleMcpAction('启动', payload);
+  if (action === 'mcp-stopped') return handleMcpAction('停止', payload);
+  if (action === 'mcp-configure') return configureMcpPorts();
+}
+
+// ---- MCP Server 状态与配置 ----
+async function handleMcpAction(verb, payload) {
+  const message = payload?.message || '';
+  showToast(`MCP Server ${verb}：${message}`);
+  await refreshMcpStatus();
+}
+
+async function refreshMcpStatus() {
+  try {
+    const status = await window.serialScope.getMcpStatus();
+    const state = status.running ? 'MCP 运行中' : 'MCP 未启动';
+    const ports = (status.allowPorts || []).join(', ') || '(无)';
+    showToast(`${state}｜白名单端口：${ports}`);
+  } catch (error) {
+    showToast(error.message || '无法获取 MCP 状态');
+  }
+}
+
+async function configureMcpPorts() {
+  try {
+    const status = await window.serialScope.getMcpStatus();
+    const current = (status.allowPorts || []).join(', ');
+    const input = window.prompt('MCP 端口白名单（逗号分隔，仅这些端口可被 MCP 操控）：', current);
+    if (input === null) return;
+    const ports = input.split(/[,，\s]+/).filter(Boolean);
+    const result = await window.serialScope.setMcpPorts(ports);
+    showToast(`MCP 端口白名单已更新：${(result.allowPorts || []).join(', ') || '(空)'}`);
+  } catch (error) {
+    showToast(error.message || '配置 MCP 端口白名单失败');
+  }
 }
 
 // ---- AI 规约解析（page-protocol）----
