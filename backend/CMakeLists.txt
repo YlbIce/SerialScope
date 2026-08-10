@@ -35,6 +35,7 @@ add_subdirectory(vendor/CSerialPort EXCLUDE_FROM_ALL)
 
 add_executable(serialscope-backend
   src/main.cpp
+  src/BackendDiagnostics.cpp
   src/AiAdapter.cpp
   src/FrameDecoder.cpp
   src/ProtocolUtils.cpp
@@ -131,6 +132,7 @@ add_executable(serialscope-virtual-serial-writer tests/VirtualSerialWriter.cpp)
 add_executable(serialscope-virtual-serial-reader tests/VirtualSerialReader.cpp)
 add_executable(serialscope-virtual-serial-roundtrip tests/VirtualSerialRoundTrip.cpp)
 add_executable(serialscope-virtual-serial-responder tests/VirtualSerialResponder.cpp)
+add_executable(serialscope-virtual-serial-burst-writer tests/VirtualSerialBurstWriter.cpp)
 add_executable(serialscope-named-pipe-slow-client tests/VirtualNamedPipeSlowClient.cpp)
 add_executable(serialscope-named-pipe-second-client tests/VirtualNamedPipeSecondClient.cpp)
 
@@ -139,6 +141,7 @@ if (MSVC)
   target_compile_options(serialscope-virtual-serial-reader PRIVATE /utf-8 /permissive-)
   target_compile_options(serialscope-virtual-serial-roundtrip PRIVATE /utf-8 /permissive-)
   target_compile_options(serialscope-virtual-serial-responder PRIVATE /utf-8 /permissive-)
+  target_compile_options(serialscope-virtual-serial-burst-writer PRIVATE /utf-8 /permissive-)
   target_compile_options(serialscope-named-pipe-slow-client PRIVATE /utf-8 /permissive-)
   target_compile_options(serialscope-named-pipe-second-client PRIVATE /utf-8 /permissive-)
 endif()

@@ -150,6 +150,7 @@
                   <span>帧长度（字节）</span>
                   <input id="frameSizeInput" type="number" min="1" max="131072" value="8" step="1" />
                 </label>
+                <label class="check-label"><input id="autoReconnectCheck" type="checkbox" /> 打开失败时自动重连（最多 8 次）</label>
                 <div class="button-row">
                   <button id="openButton" class="primary-button" type="button">打开</button>
                   <button id="closeButton" type="button">关闭</button>
@@ -348,6 +349,8 @@
                 <label><span>模式</span><select id="macroModeSelect"><option value="text">Text</option><option value="hex">HEX</option></select></label>
                 <label><span>数据</span><textarea id="macroDataInput" rows="6" spellcheck="false" placeholder="文本或十六进制字节"></textarea></label>
                 <label><span>行尾</span><select id="macroLineEndingSelect"><option value="none">None</option><option value="CR">CR</option><option value="LF">LF</option><option value="CRLF">CRLF</option></select></label>
+                <label><span>CRC 计算（HEX）</span><select id="macroChecksumSelect"><option value="crc8">CRC-8</option><option value="crc16-modbus">CRC16-Modbus（低字节在前）</option><option value="crc16-ccitt-false">CRC16-CCITT-FALSE（高字节在前）</option><option value="crc16-xmodem">CRC16-XMODEM（高字节在前）</option><option value="crc32">CRC32 / IEEE（低字节在前）</option></select></label>
+                <button id="appendMacroChecksumButton" type="button">计算并追加校验</button>
                 <label class="check-label"><input id="macroCrcCheck" type="checkbox" /> 追加 Modbus CRC16</label>
                 <div class="button-row"><button id="saveMacroButton" class="primary-button" type="button">保存宏</button><button id="deleteMacroButton" class="danger-button" type="button">删除</button></div>
               </section>
@@ -459,6 +462,9 @@
             <input id="aiApiKeyInput" type="password" autocomplete="off" spellcheck="false" placeholder="sk-..." />
           </label>
           <label class="check-label">
+            <input id="aiSaveKeyCheck" type="checkbox" /> 将 API Key 保存到本地（下次启动自动读取）
+          </label>
+          <label class="check-label">
             <input id="aiIncludeSerialCheck" type="checkbox" /> AI 解析时包含最近串口 RX 数据
           </label>
           <div id="aiTestResult" class="ai-test-result"></div>
@@ -501,6 +507,7 @@
         </footer>
       </section>
     </div>
+    <script src="./serial-reconnect-policy.js"></script>
     <script src="./renderer.js"></script>
   </body>
 </html>

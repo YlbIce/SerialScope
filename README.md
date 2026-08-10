@@ -137,3 +137,5 @@ npm run process:check
 - 串口独占与错误恢复策略
 - Windows 安装包、代码签名、自动更新
 - 大流量串口数据下的前端限流和后端环形缓冲
+
+生产发布、跨 Windows 会话拒绝、CSerialPort LGPL 审查和真实物理设备回归的人工闸门见 [发布与外部验证清单](docs/release-and-external-validation-gates.md)。

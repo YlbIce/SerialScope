@@ -20,6 +20,8 @@
     "test:protocol-import": "node scripts/test-protocol-import.js",
     "test:deepseek": "node scripts/test-deepseek.js",
     "test:named-pipe-serial": "node scripts/test-named-pipe-serial.js",
+    "test:named-pipe-protocol-lifecycle": "node scripts/test-named-pipe-protocol-lifecycle.js",
+    "test:named-pipe-load": "node scripts/test-named-pipe-load.js",
     "test:named-pipe-fixed-frame": "node scripts/test-named-pipe-fixed-frame.js",
     "test:named-pipe-outbound-boundary": "node scripts/test-named-pipe-outbound-boundary.js",
     "test:named-pipe-single-client": "node scripts/test-named-pipe-single-client.js",
@@ -29,6 +31,12 @@
     "test:auto-query-backpressure-ui": "node scripts/test-auto-query-backpressure-ui.js",
     "test:log-export-contract": "node scripts/test-log-export-contract.js",
     "test:react-workbench-ui": "npm run build:renderer && electron scripts/test-react-workbench-ui.js",
+    "test:workbench-checksums": "node scripts/test-workbench-checksums.mjs",
+    "test:diagnostics": "node scripts/test-diagnostics.js",
+    "test:backend-diagnostics": "node scripts/test-backend-diagnostics.js",
+    "test:serial-reconnect": "node scripts/test-serial-reconnect.js",
+    "test:release-compliance-gates": "node scripts/test-release-compliance-gates.js",
+    "test:cross-session-pipe-client": "node scripts/test-cross-session-pipe-client.js",
     "test:flow-runtime": "node scripts/test-flow-runtime.mjs",
     "test:device-workbench": "node scripts/test-device-workbench.mjs",
     "test:workbench-authorization": "node scripts/test-workbench-execution-authorization.js",
@@ -51,9 +59,11 @@
   },
   "dependencies": {
     "@xyflow/react": "^12.10.0",
+    "highlight.js": "^11.11.1",
     "mammoth": "^1.12.0",
     "pdfjs-dist": "^5.4.296",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "xlsx": "^0.18.5"
   }
 }

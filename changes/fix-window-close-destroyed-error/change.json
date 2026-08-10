@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "fix-window-close-destroyed-error",
+  "title": "修复关闭窗口时 Object has been destroyed 未捕获异常",
+  "riskTier": "L1",
+  "state": "verify-complete",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}

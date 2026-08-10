@@ -1,4 +1,5 @@
 #include "NamedPipeServer.h"
+#include "BackendDiagnostics.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -24,6 +25,13 @@ std::wstring readPipeName(int argc, char* argv[]) {
       const std::string value = argv[i + 1];
       return std::wstring(value.begin(), value.end());
     }
+  }
+  return {};
+}
+
+std::string readArg(int argc, char* argv[], const std::string& name) {
+  for (int i = 1; i + 1 < argc; ++i) {
+    if (std::string(argv[i]) == name) return argv[i + 1];
   }
   return {};
 }
@@ -55,7 +63,11 @@ int main(int argc, char* argv[]) {
     boost::asio::io_context io;
     auto work = boost::asio::make_work_guard(io);
     std::thread ioThread([&io] { io.run(); });
-    NamedPipeServer server(io, pipeName);
+    const std::string diagnosticsDir = readArg(argc, argv, "--diagnostics-dir");
+    const std::string diagnosticsRunId = readArg(argc, argv, "--diagnostics-run-id");
+    auto diagnostics = diagnosticsDir.empty() ? nullptr : std::make_shared<BackendDiagnostics>(diagnosticsDir, diagnosticsRunId);
+    if (diagnostics) diagnostics->log("backend-start", {{"pid", GetCurrentProcessId()}});
+    NamedPipeServer server(io, pipeName, diagnostics);
     std::cout << "SerialScope Native backend listening on Named Pipe\n";
     const int result = server.run();
     work.reset();

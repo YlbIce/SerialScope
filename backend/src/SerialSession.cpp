@@ -1,4 +1,5 @@
 #include "SerialSession.h"
+#include "BackendDiagnostics.h"
 
 #include <algorithm>
 #include <sstream>
@@ -33,8 +34,8 @@ std::pair<std::string, std::string> parseHardwareId(const std::string& hardwareI
 
 } // namespace
 
-SerialSession::SerialSession(asio::io_context& io)
-  : io_(io) {
+SerialSession::SerialSession(asio::io_context& io, std::shared_ptr<BackendDiagnostics> diagnostics)
+  : io_(io), diagnostics_(std::move(diagnostics)) {
 }
 
 void SerialSession::setEventHandler(EventHandler handler) {
@@ -136,6 +137,7 @@ Json SerialSession::open(const Json& config) {
   }
 
   if (!errorMessage.empty()) {
+    if (diagnostics_) diagnostics_->log("serial-open-failed", {{"portName", portName}, {"message", errorMessage}});
     emitState(errorMessage);
     return {{"ok", false}, {"message", errorMessage}};
   }
@@ -148,6 +150,7 @@ Json SerialSession::open(const Json& config) {
   rxFrames_ = 0;
   txFrames_ = 0;
   startTime_ = std::chrono::steady_clock::now();
+  if (diagnostics_) diagnostics_->log("serial-opened", {{"portName", portName_}, {"baudRate", baudRate_}});
   emitState("串口已打开");
   return {{"ok", true}, {"message", "串口已打开"}, {"state", stateJson()}};
 }
@@ -162,6 +165,7 @@ Json SerialSession::close() {
   }
   frameDecoder_.reset();
   portName_.clear();
+  if (diagnostics_) diagnostics_->log("serial-closed");
   emitState("串口已关闭");
   return {{"ok", true}, {"message", "串口已关闭"}, {"state", stateJson()}};
 }
@@ -219,12 +223,14 @@ Json SerialSession::sendPayload(const Json& payload) {
   }
 
   if (written < 0) {
+    if (diagnostics_) diagnostics_->log("serial-send-failed", {{"message", lastErrorMessage()}});
     return {{"ok", false}, {"message", "写入失败：" + lastErrorMessage()}};
   }
 
   Bytes sent(bytes.begin(), bytes.begin() + static_cast<std::ptrdiff_t>(written));
   txBytes_ += static_cast<std::uint64_t>(written);
   txFrames_ += 1;
+  if (diagnostics_) diagnostics_->log("serial-sent", {{"bytes", written}, {"sequence", transferSequence_ + 1}});
   emitTransferEvent("tx", sent);
   emitState();
   return {{"ok", true}, {"bytes", written}, {"state", stateJson()}};
@@ -378,6 +384,7 @@ void SerialSession::handleReceived(Bytes bytes) {
     rxFrames_ += 1;
     emitTransferEvent("rx", frame);
   }
+  if (diagnostics_) diagnostics_->log("serial-received", {{"bytes", bytes.size()}, {"frames", decoded.frames.size()}});
   if (decoded.overflowed) {
     emitError("帧缓冲配置无效或分隔符帧缓冲超过 1 MiB，已丢弃未完成数据");
   }
@@ -396,6 +403,7 @@ void SerialSession::emitState(const std::string& message) {
 }
 
 void SerialSession::emitError(const std::string& message) {
+  if (diagnostics_) diagnostics_->log("serial-error", {{"message", message}});
   if (!eventHandler_) {
     return;
   }
@@ -409,11 +417,12 @@ void SerialSession::emitTransferEvent(const std::string& direction, const Bytes&
   if (!eventHandler_) {
     return;
   }
+  const auto sequence = ++transferSequence_;
   eventHandler_({
     {"type", "serial:" + direction},
     {"payload", {
       {"timestamp", protocol::utcTimestamp()},
-      {"sequence", ++transferSequence_},
+      {"sequence", sequence},
       {"direction", direction},
       {"bytes", bytes.size()},
       {"text", protocol::bytesToDisplayText(bytes)},

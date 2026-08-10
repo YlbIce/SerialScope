@@ -11,6 +11,7 @@ const { McpBridge } = require('./mcp-bridge');
 const { extractProtocolText } = require('./protocol-import');
 const { AiConfig } = require('./ai-config');
 const { parseProtocolWithDeepSeek, generateCommandsWithDeepSeek, testConnection } = require('./deepseek-provider');
+const { RuntimeDiagnostics } = require('./diagnostics');
 
 // 串口工具的核心功能不依赖 GPU。部分 Windows 环境缺少 Chromium GPU
 // 子进程所需运行库时，强制软件渲染可避免应用在创建窗口前直接退出。
@@ -36,7 +37,13 @@ let mcpBridge = null;
 let aiConfig = null;
 let simulatorInstance = null;
 let isQuitting = false;
+let diagnostics = null;
+let diagnosticsRunId = null;
 const simulatorReadyTimeoutMs = 30000;
+
+function diagnostic(source, event, details = {}) {
+  diagnostics?.log(source, event, details);
+}
 const workbenchExecution = createWorkbenchExecutionAuthorizer({
   getSerialState: async () => {
     if (!backendRpc) throw new Error('Named Pipe 后端未连接');
@@ -153,21 +160,29 @@ function startBackend() {
   }
 
   const pipeName = `\\\\.\\pipe\\SerialScope.Native.${randomUUID()}`;
-  backendProcess = spawn(exe, ['--pipe', pipeName], {
+  const backendArgs = ['--pipe', pipeName];
+  if (diagnostics && diagnosticsRunId) {
+    backendArgs.push('--diagnostics-dir', diagnostics.directory, '--diagnostics-run-id', diagnosticsRunId);
+  }
+  diagnostic('main', 'backend-start', { executable: exe, pipeName });
+  backendProcess = spawn(exe, backendArgs, {
     cwd: path.dirname(exe),
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
   backendProcess.stdout.on('data', (chunk) => {
+    diagnostic('backend-stdout', 'output', { message: chunk.toString('utf8') });
     sendToRenderer('backend:log', chunk.toString('utf8'));
   });
 
   backendProcess.stderr.on('data', (chunk) => {
+    diagnostic('backend-stderr', 'output', { message: chunk.toString('utf8') });
     sendToRenderer('backend:log', chunk.toString('utf8'));
   });
 
   backendProcess.on('exit', (code) => {
+    diagnostic('main', 'backend-exit', { code });
     if (backendRpc) backendRpc.close();
     backendRpc = null;
     backendProcess = null;
@@ -181,11 +196,12 @@ function startBackend() {
   const startedProcess = backendProcess;
   const startedRpc = backendRpc;
   backendRpc.on('notification', (method, params) => {
+    diagnostic('main', 'backend-notification', { method, sequence: params?.sequence, bytes: params?.bytes });
     if (method === 'serial.rx' && mcpBridge) mcpBridge.appendRxFrame(params);
     sendToRenderer('backend:rpc-notification', { method, params });
   });
-  backendRpc.on('error', (error) => sendToRenderer('backend:log', `Named Pipe 错误：${error.message}`));
-  backendRpc.on('disconnect', () => sendToRenderer('backend:log', 'Named Pipe 后端连接已断开'));
+  backendRpc.on('error', (error) => { diagnostic('main', 'named-pipe-error', { error }); sendToRenderer('backend:log', `Named Pipe 错误：${error.message}`); });
+  backendRpc.on('disconnect', () => { diagnostic('main', 'named-pipe-disconnect'); sendToRenderer('backend:log', 'Named Pipe 后端连接已断开'); });
   startedRpc.connect(pipeName)
     .then(() => startedRpc.call('backend.ping'))
     .then((result) => {
@@ -235,6 +251,7 @@ function createWindow(moduleId = null) {
       sandbox: moduleId === 'workbench' || (moduleId === 'simulator' && startupModule === 'simulator') ? false : true
     }
   });
+  const webContentsId = target.webContents.id;
 
   // React 工作台先以独立窗口渐进上线；串口终端等既有模块继续使用已验证的
   // 原生渲染器，避免一次框架迁移影响现场调试能力。
@@ -245,6 +262,9 @@ function createWindow(moduleId = null) {
     : legacyRenderer;
   if (renderer === reactWorkbench) target.loadURL('serialscope://workbench/index.html');
   else target.loadFile(renderer, moduleId ? { query: { module: moduleId } } : undefined);
+  target.webContents.on('render-process-gone', (_event, details) => diagnostic('main', 'renderer-process-gone', { moduleId, reason: details.reason, exitCode: details.exitCode }));
+  target.webContents.on('preload-error', (_event, preloadPath, error) => diagnostic('main', 'preload-error', { moduleId, preloadPath, error }));
+  target.on('unresponsive', () => diagnostic('main', 'renderer-unresponsive', { moduleId }));
 
   if (process.env.ELECTRON_DEV === '1' && !moduleId) {
     target.webContents.openDevTools({ mode: 'detach' });
@@ -263,7 +283,13 @@ function createWindow(moduleId = null) {
   }
 
   target.on('closed', () => {
-    workbenchExecution.end(target.webContents.id);
+    diagnostic('main', 'window-closed', { moduleId, webContentsId });
+    // closed 触发时 webContents 已销毁，使用创建时缓存的 id，避免 Object has been destroyed。
+    try {
+      workbenchExecution.end(webContentsId);
+    } catch (error) {
+      diagnostic('main', 'workbench-end-failed', { webContentsId, error: error.message });
+    }
     if (moduleId === 'workbench') stopSimulatorInstance();
     if (moduleId) moduleWindows.delete(moduleId);
     else mainWindow = null;
@@ -378,6 +404,11 @@ ipcMain.handle('backend:info', () => ({
 
 ipcMain.handle('backend:start', () => startBackend());
 
+ipcMain.handle('diagnostics:renderer', (event, name, details = {}) => {
+  diagnostic('renderer', String(name || 'event').slice(0, 80), { senderId: event.sender.id, details });
+  return { recorded: true, runId: diagnosticsRunId };
+});
+
 ipcMain.handle('workbench:beginExecution', async (event, request = {}) => {
   if (moduleForWebContents(event.sender) !== 'workbench') throw new Error('仅通信测试工作台可以申请执行权限');
   const owner = BrowserWindow.fromWebContents(event.sender);
@@ -487,6 +518,7 @@ ipcMain.handle('backend:rpc', async (_event, method, params = {}) => {
   if (typeof method !== 'string' || !allowedRpcMethods.has(method)) throw new Error('不允许的后端 RPC 方法');
   if (params === null || typeof params !== 'object' || Array.isArray(params)) throw new Error('RPC 参数必须是对象');
   if (!backendRpc) throw new Error('Named Pipe 后端未连接');
+  diagnostic('main', 'backend-rpc', { method, senderId: _event.sender.id });
   if (method === 'serial.send' && moduleForWebContents(_event.sender) === 'workbench') {
     await workbenchExecution.validateSend(_event.sender.id);
   }
@@ -570,10 +602,11 @@ ipcMain.handle('file:importProtocol', async (_event) => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: '导入规约文档',
     filters: [
-      { name: '规约文档', extensions: ['docx', 'pdf', 'txt', 'md'] },
+      { name: '规约文档', extensions: ['docx', 'pdf', 'txt', 'md', 'xlsx', 'xls'] },
       { name: 'Word 文档', extensions: ['docx'] },
       { name: 'PDF', extensions: ['pdf'] },
-      { name: '文本/Markdown', extensions: ['txt', 'md'] }
+      { name: '文本/Markdown', extensions: ['txt', 'md'] },
+      { name: 'Excel 点表', extensions: ['xlsx', 'xls'] }
     ],
     properties: ['openFile']
   });
@@ -624,6 +657,9 @@ ipcMain.handle('file:openJson', async (_event, options = {}) => {
 });
 
 app.whenReady().then(() => {
+  diagnosticsRunId = randomUUID();
+  diagnostics = new RuntimeDiagnostics({ directory: path.join(app.getPath('userData'), 'diagnostics'), runId: diagnosticsRunId });
+  diagnostic('main', 'runtime-ready', { pid: process.pid, startupModule });
   installRendererProtocol();
   Menu.setApplicationMenu(createApplicationMenu());
   startBackend();

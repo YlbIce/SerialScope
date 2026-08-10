@@ -1,4 +1,5 @@
 #include "NamedPipeServer.h"
+#include "BackendDiagnostics.h"
 
 #include <Sddl.h>
 #include <Aclapi.h>
@@ -139,11 +140,12 @@ bool isCurrentSessionClient(HANDLE pipe) {
 
 } // namespace
 
-NamedPipeServer::NamedPipeServer(asio::io_context& io, std::wstring pipeName)
+NamedPipeServer::NamedPipeServer(asio::io_context& io, std::wstring pipeName, std::shared_ptr<BackendDiagnostics> diagnostics)
   : io_(io),
     pipeName_(std::move(pipeName)),
-    serial_(std::make_shared<SerialSession>(io_)),
+    serial_(std::make_shared<SerialSession>(io_, diagnostics)),
     ai_(std::make_shared<ai::AiAdapter>()) {
+  diagnostics_ = std::move(diagnostics);
   serial_->setEventHandler([this](Json event) { emitNotification(std::move(event)); });
 }
 
@@ -300,6 +302,7 @@ bool NamedPipeServer::createAndConnect() {
     // The DACL restricts users, but a SID is shared by all sessions of that
     // user.  Reject a different local Windows session before any JSON-RPC
     // readiness notification or request is processed.
+    if (diagnostics_) diagnostics_->log("cross-session-client-rejected");
     DisconnectNamedPipe(created);
     std::scoped_lock lock(pipeMutex_);
     CloseHandle(pipe_);
@@ -385,6 +388,7 @@ Json NamedPipeServer::dispatchSingle(const Json& request, bool& shouldStop) {
   const bool isNotification = !request.contains("id");
   const Json id = isNotification ? Json(nullptr) : request.at("id");
   const std::string method = request.at("method").get<std::string>();
+  if (diagnostics_) diagnostics_->log("rpc-request", {{"method", method}, {"notification", isNotification}});
   const Json params = request.value("params", Json::object());
   const bool acceptsAnyParams = method == "backend.ping" || method == "backend.shutdown" || method == "backend.testPayload";
   if (!acceptsAnyParams && !params.is_object()) {
@@ -398,6 +402,7 @@ Json NamedPipeServer::dispatchSingle(const Json& request, bool& shouldStop) {
 
   try {
     const Json result = callSerial(method, params, shouldStop);
+    if (diagnostics_) diagnostics_->log("rpc-result", {{"method", method}, {"ok", result.value("ok", true)}});
     return isNotification ? Json() : Json({{"jsonrpc", "2.0"}, {"id", id}, {"result", result}});
   } catch (const ai::AiError& error) {
     const std::string message = std::string("[") + error.code() + "] " + error.what();
@@ -486,6 +491,7 @@ Json NamedPipeServer::callSerial(const std::string& method, const Json& params, 
 void NamedPipeServer::emitNotification(Json event) {
   const std::string type = event.value("type", std::string());
   if (type.empty()) return;
+  if (diagnostics_) diagnostics_->log("rpc-notification", {{"type", type}, {"bytes", event.value("payload", Json::object()).value("bytes", 0)}});
   if (!writeJson({{"jsonrpc", "2.0"}, {"method", notificationMethod(type)}, {"params", event.value("payload", Json::object())}})) {
     std::cerr << "Named Pipe 通知超过消息边界或客户端不可写，已断开客户端\n";
     disconnectClient();

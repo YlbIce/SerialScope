@@ -16,7 +16,7 @@ public:
   static constexpr std::size_t kMaxMessageBytes = 4 * 1024 * 1024;
   static constexpr DWORD kPipeWriteTimeoutMs = 2'000;
 
-  NamedPipeServer(boost::asio::io_context& io, std::wstring pipeName);
+  NamedPipeServer(boost::asio::io_context& io, std::wstring pipeName, std::shared_ptr<class BackendDiagnostics> diagnostics = nullptr);
   ~NamedPipeServer();
 
   NamedPipeServer(const NamedPipeServer&) = delete;
@@ -42,6 +42,7 @@ private:
   std::wstring pipeName_;
   std::shared_ptr<SerialSession> serial_;
   std::shared_ptr<ai::AiAdapter> ai_;
+  std::shared_ptr<class BackendDiagnostics> diagnostics_;
   std::atomic_bool stopping_ {false};
   std::mutex pipeMutex_;
   HANDLE pipe_ = INVALID_HANDLE_VALUE;

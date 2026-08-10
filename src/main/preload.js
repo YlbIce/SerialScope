@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('serialScope', {
   getBackendInfo: () => ipcRenderer.invoke('backend:info'),
   startBackend: () => ipcRenderer.invoke('backend:start'),
   callBackend: (method, params) => ipcRenderer.invoke('backend:rpc', method, params),
+  reportDiagnostic: (name, details) => ipcRenderer.invoke('diagnostics:renderer', name, details),
   beginWorkbenchExecution: (request) => ipcRenderer.invoke('workbench:beginExecution', request),
   endWorkbenchExecution: () => ipcRenderer.invoke('workbench:endExecution'),
   launchSimulatorInstance: (config) => ipcRenderer.invoke('workbench:launchSimulator', config),

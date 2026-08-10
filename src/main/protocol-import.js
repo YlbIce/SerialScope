@@ -1,4 +1,4 @@
-// 规约文档文本提取：支持 docx (mammoth) / pdf (pdfjs-dist legacy) / txt / md。
+// 规约文档文本提取：支持 docx (mammoth) / pdf (pdfjs-dist legacy) / txt / md / xlsx|xls (SheetJS)。
 // 在 Electron main 进程运行（renderer 无法直接 require Node 库）。
 const fs = require('fs');
 const path = require('path');
@@ -60,12 +60,37 @@ async function extractDocxText(filePath) {
   return result.value || '';
 }
 
+// Excel 点表解析：把每个 sheet 转成制表符分隔的表格文本，便于 AI 解析 Modbus 点表。
+// 用 SheetJS（xlsx）读取，支持 .xlsx/.xls。
+function extractExcelText(filePath) {
+  const XLSX = require('xlsx');
+  const workbook = XLSX.readFile(filePath, { cellDates: false });
+  const parts = [];
+  workbook.SheetNames.forEach((name) => {
+    const sheet = workbook.Sheets[name];
+    if (!sheet) return;
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true });
+    parts.push(`===== Sheet: ${name} =====`);
+    for (const row of rows) {
+      if (!Array.isArray(row)) continue;
+      // 跳过整行为空的行。
+      const trimmed = row.map((cell) => (cell === null || cell === undefined) ? '' : String(cell).trim());
+      if (trimmed.every((cell) => cell === '')) continue;
+      parts.push(trimmed.join('\t'));
+    }
+    parts.push('');
+  });
+  const text = parts.join('\n').trim();
+  return text || '';
+}
+
 async function extractProtocolText(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.docx') return { ok: true, text: await extractDocxText(filePath) };
   if (ext === '.pdf') return { ok: true, text: await extractPdfText(filePath) };
   if (ext === '.txt' || ext === '.md') return { ok: true, text: fs.readFileSync(filePath, 'utf8') };
-  return { ok: false, message: `不支持的文件类型：${ext || '(无扩展名)'}（支持 docx/pdf/txt/md）` };
+  if (ext === '.xlsx' || ext === '.xls') return { ok: true, text: extractExcelText(filePath) };
+  return { ok: false, message: `不支持的文件类型：${ext || '(无扩展名)'}（支持 docx/pdf/txt/md/xlsx/xls）` };
 }
 
 module.exports = { extractProtocolText };

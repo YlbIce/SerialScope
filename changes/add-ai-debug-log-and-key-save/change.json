@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "add-ai-debug-log-and-key-save",
+  "title": "AI: 打印 DeepSeek 原始回复 + API Key 可选本地保存",
+  "riskTier": "L2",
+  "state": "ready-for-review",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}

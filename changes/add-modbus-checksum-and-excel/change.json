@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "add-modbus-checksum-and-excel",
+  "title": "命令生成追加校验码 + 支持 Modbus 点表 Excel 导入",
+  "riskTier": "L2",
+  "state": "ready-for-review",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}

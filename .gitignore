@@ -1,20 +1,23 @@
+# Node
 node_modules/
-dist/
-src/renderer-dist/
-release/
-backend/build/
-backend/build-*/
+
+# 构建产物（本地脚本生成的中间 HTML 与 manifest）
+build/
+
+# C++ 编译产物
 backend/bin/
-.tmp/
-*.log
-*.user
-*.suo
-*.ninja
-*.obj
-*.pdb
-*.ilk
-*.exe
-*.dll
-*.dSYM/
-artifacts/
+backend/build/
+
+# Vite / Electron 渲染构建产物
+src/renderer-dist/
+
+# 编辑器 / IDE
 .vscode/
+*.vscode/
+
+# 截图与临时输出（公众号素材，不纳入 git）
+artifacts/
+docs/artifacts/
+
+# Electron 用户数据 / 日志
+*.log

@@ -1,11 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Background, Controls, Handle, MiniMap, Position, ReactFlow, addEdge, useEdgesState, useNodesState } from '@xyflow/react';
 import { executeFlowGraph, FlowExecutionError, normalizeHex, snapshotForReport } from './flow-runtime.mjs';
+import { appendChecksum, checksumAlgorithms } from './checksums.mjs';
 
 const api = window.serialScope;
 const flowStorageKey = 'serialscope.device-workbench.flow.v2';
 const flowVersionsStorageKey = 'serialscope.device-workbench.flow-versions.v1';
 const macroStorageKey = 'serialscope.device-workbench.macros.v1';
+const mainMacroStorageKey = 'serialscope.macros';
 const reportStorageKey = 'serialscope.device-workbench.reports.v1';
 const ruleStorageKey = 'serialscope.device-workbench.rules.v1';
 
@@ -52,6 +54,25 @@ function normalizeMacros(value) {
   })) : [];
   const byId = new Map(builtInMacros.map((macro) => [macro.id, macro]));
   for (const macro of stored) byId.set(macro.id, macro);
+  return [...byId.values()];
+}
+function normalizeMainMacros(value) {
+  return Array.isArray(value) ? value.filter((macro) => macro?.name && macro?.data != null).map((macro) => ({
+    id: `legacy-${encodeURIComponent(String(macro.name))}`,
+    name: String(macro.name),
+    kind: macro.kind === 'write' ? 'write' : 'query',
+    mode: macro.mode === 'text' ? 'text' : 'hex',
+    data: String(macro.data),
+    lineEnding: macro.lineEnding || 'none',
+    appendModbusCrc: Boolean(macro.appendModbusCrc),
+    revision: Math.max(1, Number(macro.revision || 1)),
+    updatedAt: Number(macro.updatedAt || 0),
+    source: 'main'
+  })) : [];
+}
+function availableMacros(workbenchMacros, mainMacros) {
+  const byId = new Map(mainMacros.map((macro) => [macro.id, macro]));
+  for (const macro of workbenchMacros) byId.set(macro.id, macro);
   return [...byId.values()];
 }
 
@@ -111,13 +132,22 @@ export function App() {
   const [report, setReport] = useState(null);
   const [reports, setReports] = useState(() => parseStorage(reportStorageKey, []));
   const [macros, setMacros] = useState(() => normalizeMacros(parseStorage(macroStorageKey, [])));
-  const [macroDraft, setMacroDraft] = useState({ name: '读取寄存器', kind: 'query', mode: 'hex', data: '01 03 00 00 00 02 C4 0B', lineEnding: 'none' });
+  const [mainMacros, setMainMacros] = useState(() => normalizeMainMacros(parseStorage(mainMacroStorageKey, [])));
+  const [macroDraft, setMacroDraft] = useState({ name: '读取寄存器', kind: 'query', mode: 'hex', data: '01 03 00 00 00 02 C4 0B', lineEnding: 'none', checksumAlgorithm: 'crc16-modbus' });
   const [rules, setRules] = useState(() => normalizeRules(parseStorage(ruleStorageKey, [])));
   const [ruleDraft, setRuleDraft] = useState({ name: 'Modbus 读应答', pattern: '^01\\s*03' });
   const [flowVersions, setFlowVersions] = useState(() => parseStorage(flowVersionsStorageKey, []));
   const waiters = useRef(new Set());
   const controller = useRef(null);
   const rulesRef = useRef(rules);
+
+  useEffect(() => {
+    const report = (name, details) => api.reportDiagnostic?.(name, details).catch(() => {});
+    const onError = (event) => report('uncaught-error', { message: event.message, filename: event.filename, line: event.lineno, column: event.colno });
+    const onRejection = (event) => report('unhandled-rejection', { message: String(event.reason?.message || event.reason || 'unknown') });
+    window.addEventListener('error', onError); window.addEventListener('unhandledrejection', onRejection);
+    return () => { window.removeEventListener('error', onError); window.removeEventListener('unhandledrejection', onRejection); };
+  }, []);
 
   const publishFrame = useCallback((frame) => {
     for (const resolve of [...waiters.current]) resolve(frame);
@@ -160,12 +190,18 @@ export function App() {
   useEffect(() => localStorage.setItem(flowStorageKey, JSON.stringify({ version: 2, revision: flowVersion, nodes, edges })), [nodes, edges, flowVersion]);
   useEffect(() => localStorage.setItem(macroStorageKey, JSON.stringify(macros)), [macros]);
   useEffect(() => { rulesRef.current = rules; localStorage.setItem(ruleStorageKey, JSON.stringify(rules)); }, [rules]);
+  useEffect(() => {
+    const refreshMainMacros = () => setMainMacros(normalizeMainMacros(parseStorage(mainMacroStorageKey, [])));
+    window.addEventListener('storage', refreshMainMacros);
+    return () => window.removeEventListener('storage', refreshMainMacros);
+  }, []);
 
   const selected = nodes.find((node) => node.id === selectedId);
+  const macroOptions = useMemo(() => availableMacros(macros, mainMacros), [macros, mainMacros]);
   const updateSelected = (field, value) => setNodes((items) => items.map((node) => node.id === selectedId ? { ...node, data: { ...node.data, [field]: value } } : node));
   const addNode = (kind, data = {}) => {
     const id = `${kind}-${Date.now()}`;
-    const selectedMacro = macros[0] || builtInMacros[0];
+    const selectedMacro = macroOptions[0] || builtInMacros[0];
     const defaults = { macro: { macroId: selectedMacro.id, macroName: selectedMacro.name, mode: selectedMacro.mode, data: selectedMacro.data }, write: { mode: macroDraft.mode, data: macroDraft.data }, read: { timeoutMs: 500, conditionType: 'hex', expected: '' }, condition: { conditionType: 'hex', operator: 'startsWith', expected: '' }, loop: { maxIterations: 3, maxDurationMs: 10000, intervalMs: 100 }, delay: { durationMs: 100 }, assign: { variable: 'value', value: '' }, assert: { conditionType: 'hex', operator: 'startsWith', expected: '', message: '断言不满足' }, end: { result: 'passed' } };
     setNodes((items) => [...items, { id, type: 'flow', position: { x: 280 + (items.length % 4) * 230, y: 430 + Math.floor(items.length / 4) * 110 }, data: { label: labels[kind], kind, ...defaults[kind], ...data } }]);
     setSelectedId(id);
@@ -179,6 +215,13 @@ export function App() {
       const next = { ...macroDraft, id: existing?.id || newId('macro'), data: macroDraft.data, revision: (existing?.revision || 0) + 1, updatedAt: Date.now() };
       return [...items.filter((item) => item.id !== next.id), next];
     });
+  };
+  const appendMacroChecksum = () => {
+    if (macroDraft.mode !== 'hex') return setRun({ state: 'failed', node: 'macro-library', detail: 'CRC 仅支持 HEX 宏' });
+    const data = appendChecksum(macroDraft.data, macroDraft.checksumAlgorithm);
+    if (!data) return setRun({ state: 'failed', node: 'macro-library', detail: 'HEX 报文无效，无法计算校验' });
+    setMacroDraft({ ...macroDraft, data });
+    setRun({ state: 'idle', node: 'macro-library', detail: `已追加 ${checksumAlgorithms.find((item) => item.id === macroDraft.checksumAlgorithm)?.label || 'CRC'}；请保存宏` });
   };
   const saveRule = () => {
     try { new RegExp(ruleDraft.pattern, 'i'); } catch { return setRun({ state: 'failed', node: 'rule-library', detail: '规则表达式无效' }); }
@@ -237,13 +280,13 @@ export function App() {
     setEdges((items) => items.map((edge) => ({ ...edge, animated: false, style: undefined })));
     const usedMacros = [];
     try {
-      const macrosById = new Map(macros.map((macro) => [macro.id, macro]));
+      const macrosById = new Map(macroOptions.map((macro) => [macro.id, macro]));
       const executionNodes = nodes.map((node) => {
         if (node.data?.kind !== 'macro') return node;
         if (!node.data.macroId) throw new Error(`宏节点“${node.data.label || node.id}”必须引用宏库项；请改为“写入”节点或选择宏库`);
         const macro = macrosById.get(node.data.macroId);
         if (!macro) throw new Error(`宏节点“${node.data.label || node.id}”引用的宏已不存在`);
-        return { ...node, data: { ...node.data, macroName: macro.name, mode: macro.mode, data: macro.data, lineEnding: macro.lineEnding, macroSnapshot: snapshotForReport(macro) } };
+        return { ...node, data: { ...node.data, macroName: macro.name, mode: macro.mode, data: macro.data, lineEnding: macro.lineEnding, appendModbusCrc: Boolean(macro.appendModbusCrc), macroSnapshot: snapshotForReport(macro) } };
       });
       const result = await executeFlowGraph({ nodes: executionNodes, edges, signal: execution.signal, variables: {}, operations: {
         send: async (message) => { const value = await api.callBackend('serial.send', message); if (!value.ok) throw new Error(value.message || '串口发送失败'); },
@@ -290,14 +333,14 @@ export function App() {
 
   return <div className="app workbench-only">
     <main><header><div><small>React Flow · 可执行通信用例</small><h2>通信测试工作台</h2></div><div className={serial.isOpen ? 'pill online' : 'pill'}>{serial.isOpen ? `${serial.portName} 已打开` : '串口未打开'}</div></header><section className="run-mode"><b>执行目标</b><label><input type="radio" checked={runTarget === 'simulation'} onChange={() => setRunTarget('simulation')} /> 模拟下位机回归</label><label><input type="radio" checked={runTarget === 'hardware'} onChange={() => setRunTarget('hardware')} /> 真实设备</label>{runTarget === 'hardware' && <label><input type="checkbox" checked={hardwareApproved} onChange={(event) => setHardwareApproved(event.target.checked)} /> 已取得设备、参数与安全报文授权</label>}<button onClick={() => configureSimulator().catch((error) => setRun({ state: 'failed', node: 'simulator', detail: error.message }))}>启动第二个模拟实例</button></section>
-      <section className="workbench"><aside className="palette"><b>节点与宏库</b>{['macro', 'write', 'read', 'condition', 'loop', 'delay', 'assign', 'assert', 'end'].map((kind) => <button key={kind} onClick={() => addNode(kind)}>+ {labels[kind]}</button>)}<hr/><label>宏名称<input value={macroDraft.name} onChange={(event) => setMacroDraft({ ...macroDraft, name: event.target.value })} /></label><label>类别<select value={macroDraft.kind} onChange={(event) => setMacroDraft({ ...macroDraft, kind: event.target.value })}><option value="query">查询</option><option value="write">写入</option></select></label><label>模式<select value={macroDraft.mode} onChange={(event) => setMacroDraft({ ...macroDraft, mode: event.target.value })}><option value="hex">HEX</option><option value="text">文本</option></select></label><label>报文<input value={macroDraft.data} onChange={(event) => setMacroDraft({ ...macroDraft, data: event.target.value })} /></label>{macroDraft.mode === 'text' && <label>行尾<select value={macroDraft.lineEnding} onChange={(event) => setMacroDraft({ ...macroDraft, lineEnding: event.target.value })}><option value="none">无</option><option value="CRLF">CRLF</option><option value="LF">LF</option></select></label>}<button onClick={saveMacro}>保存宏</button>{macros.map((macro) => <button className="macro-item" key={macro.id} onClick={() => addNode('macro', { label: `宏：${macro.name}`, macroId: macro.id, macroName: macro.name, mode: macro.mode, data: macro.data })}>{macro.kind === 'write' ? '写' : '查'} · {macro.name} · v{macro.revision}</button>)}<hr/><b>规则库（供“规则命中”条件使用）</b><label>规则名称<input value={ruleDraft.name} onChange={(event) => setRuleDraft({ ...ruleDraft, name: event.target.value })} /></label><label>正则表达式<input value={ruleDraft.pattern} onChange={(event) => setRuleDraft({ ...ruleDraft, pattern: event.target.value })} /></label><button onClick={saveRule}>保存规则</button>{rules.map((rule) => <small key={rule.id}>{rule.name}：{rule.pattern}</small>)}</aside>
+      <section className="workbench"><aside className="palette"><b>节点与宏库</b>{['macro', 'write', 'read', 'condition', 'loop', 'delay', 'assign', 'assert', 'end'].map((kind) => <button key={kind} onClick={() => addNode(kind)}>+ {labels[kind]}</button>)}<hr/><label>宏名称<input value={macroDraft.name} onChange={(event) => setMacroDraft({ ...macroDraft, name: event.target.value })} /></label><label>类别<select value={macroDraft.kind} onChange={(event) => setMacroDraft({ ...macroDraft, kind: event.target.value })}><option value="query">查询</option><option value="write">写入</option></select></label><label>模式<select value={macroDraft.mode} onChange={(event) => setMacroDraft({ ...macroDraft, mode: event.target.value })}><option value="hex">HEX</option><option value="text">文本</option></select></label><label>报文<input value={macroDraft.data} onChange={(event) => setMacroDraft({ ...macroDraft, data: event.target.value })} /></label>{macroDraft.mode === 'hex' && <><label>CRC 计算<select value={macroDraft.checksumAlgorithm} onChange={(event) => setMacroDraft({ ...macroDraft, checksumAlgorithm: event.target.value })}>{checksumAlgorithms.map((algorithm) => <option key={algorithm.id} value={algorithm.id}>{algorithm.label}</option>)}</select></label><button onClick={appendMacroChecksum}>计算并追加校验</button></>}{macroDraft.mode === 'text' && <label>行尾<select value={macroDraft.lineEnding} onChange={(event) => setMacroDraft({ ...macroDraft, lineEnding: event.target.value })}><option value="none">无</option><option value="CRLF">CRLF</option><option value="LF">LF</option></select></label>}<button onClick={saveMacro}>保存宏</button><small>主界面宏库与工作台宏库均可直接加入流程。</small>{macroOptions.map((macro) => <button className="macro-item" key={macro.id} onClick={() => addNode('macro', { label: `宏：${macro.name}`, macroId: macro.id, macroName: macro.name, mode: macro.mode, data: macro.data, lineEnding: macro.lineEnding })}>{macro.source === 'main' ? '主' : (macro.kind === 'write' ? '写' : '查')} · {macro.name} · v{macro.revision}</button>)}<hr/><b>规则库（供“规则命中”条件使用）</b><label>规则名称<input value={ruleDraft.name} onChange={(event) => setRuleDraft({ ...ruleDraft, name: event.target.value })} /></label><label>正则表达式<input value={ruleDraft.pattern} onChange={(event) => setRuleDraft({ ...ruleDraft, pattern: event.target.value })} /></label><button onClick={saveRule}>保存规则</button>{rules.map((rule) => <small key={rule.id}>{rule.name}：{rule.pattern}</small>)}</aside>
         <div className="canvas"><ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onNodeClick={(_event, node) => setSelectedId(node.id)} onConnect={(connection) => setEdges((items) => addEdge({ ...connection, id: `e-${Date.now()}` }, items))} fitView><Background /><Controls /><MiniMap /></ReactFlow></div>
         <aside className="inspector">
           <b>节点配置</b>
           {selected ? <>
             <small>{selected.data.kind} · {selected.id}</small>
             <label>名称<input value={selected.data.label || ''} onChange={(event) => updateSelected('label', event.target.value)} /></label>
-            {selected.data.kind === 'macro' && <><label>引用宏库<select value={selected.data.macroId || ''} onChange={(event) => { const macro = macros.find((item) => item.id === event.target.value); if (macro) setNodes((items) => items.map((node) => node.id === selectedId ? { ...node, data: { ...node.data, macroId: macro.id, macroName: macro.name, mode: macro.mode, data: macro.data, lineEnding: macro.lineEnding } } : node)); }} >{macros.map((macro) => <option key={macro.id} value={macro.id}>{macro.kind === 'write' ? '写' : '查'} · {macro.name} · v{macro.revision}</option>)}</select></label><small>执行时固定取宏库版本；请在左侧宏库编辑报文。</small></>}
+            {selected.data.kind === 'macro' && <><label>引用宏库<select value={selected.data.macroId || ''} onChange={(event) => { const macro = macroOptions.find((item) => item.id === event.target.value); if (macro) setNodes((items) => items.map((node) => node.id === selectedId ? { ...node, data: { ...node.data, macroId: macro.id, macroName: macro.name, mode: macro.mode, data: macro.data, lineEnding: macro.lineEnding, appendModbusCrc: macro.appendModbusCrc } } : node)); }} >{macroOptions.map((macro) => <option key={macro.id} value={macro.id}>{macro.source === 'main' ? '主界面' : (macro.kind === 'write' ? '写' : '查')} · {macro.name} · v{macro.revision}</option>)}</select></label><small>可直接选择主界面既有宏；执行时固定取所选宏的版本快照。</small></>}
             {selected.data.kind === 'write' && <><label>模式<select value={selected.data.mode || 'hex'} onChange={(event) => updateSelected('mode', event.target.value)}><option value="hex">HEX</option><option value="text">文本</option></select></label><label>报文<input value={selected.data.data ?? selected.data.hex ?? ''} onChange={(event) => updateSelected('data', event.target.value)} /></label></>}
             {['read', 'condition', 'assert'].includes(selected.data.kind) && <PredicateEditor data={selected.data} onChange={updateSelected} />}
             {selected.data.kind === 'read' && <label>等待超时 ms<input type="number" value={selected.data.timeoutMs || 500} onChange={(event) => updateSelected('timeoutMs', Number(event.target.value))} /></label>}

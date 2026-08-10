@@ -10,6 +10,7 @@ const state = {
   connected: false,
   reconnectTimer: null,
   reconnectAttempts: 0,
+  serialReconnect: { timer: null, attempts: 0, config: null, manuallyClosed: false },
   logRenderScheduled: false,
   serialOpen: false,
   ports: [],
@@ -197,8 +198,15 @@ async function boot() {
   initAiPanel();
   restoreProfile();
   restoreSerialDraft();
+  restoreAutoReconnect();
   updateFramingUi();
   connectBackend();
+  window.addEventListener('error', (event) => window.serialScope.reportDiagnostic?.('uncaught-error', {
+    message: event.message, filename: event.filename, line: event.lineno, column: event.colno
+  }).catch(() => {}));
+  window.addEventListener('unhandledrejection', (event) => window.serialScope.reportDiagnostic?.('unhandled-rejection', {
+    message: String(event.reason?.message || event.reason || 'unknown')
+  }).catch(() => {}));
   window.serialScope.onBackendLog((message) => addSystemLog(message.trim()));
   window.serialScope.onBackendExit(() => {
     state.connected = false;
@@ -314,6 +322,49 @@ function scheduleConnection(delay) {
     state.reconnectTimer = null;
     connectBackend();
   }, delay);
+}
+
+function autoReconnectEnabled() {
+  return Boolean($('#autoReconnectCheck')?.checked);
+}
+
+function cancelSerialReconnect() {
+  if (state.serialReconnect.timer) window.clearTimeout(state.serialReconnect.timer);
+  state.serialReconnect.timer = null;
+  state.serialReconnect.attempts = 0;
+}
+
+function scheduleSerialReconnect(reason) {
+  const reconnect = state.serialReconnect;
+  if (!window.SerialReconnectPolicy?.canRetry(autoReconnectEnabled(), reconnect.attempts, reconnect.manuallyClosed) || !reconnect.config || state.serialOpen) return;
+  const attempt = reconnect.attempts++;
+  const delay = window.SerialReconnectPolicy.delayForAttempt(attempt);
+  addSystemLog(`串口自动重连将在 ${delay} ms 后进行（第 ${attempt + 1}/${window.SerialReconnectPolicy.maxAttempts} 次）：${reason}`);
+  reconnect.timer = window.setTimeout(async () => {
+    reconnect.timer = null;
+    const result = await sendCommand('serial:open', reconnect.config);
+    if (result?.ok) {
+      cancelSerialReconnect();
+      return;
+    }
+    scheduleSerialReconnect(result?.message || '打开失败');
+  }, delay);
+}
+
+async function requestSerialOpen() {
+  const config = serialConfig();
+  cancelSerialReconnect();
+  state.serialReconnect.config = config;
+  state.serialReconnect.manuallyClosed = false;
+  const result = await sendCommand('serial:open', config);
+  if (!result?.ok) scheduleSerialReconnect(result?.message || '打开失败');
+  return result;
+}
+
+function requestSerialClose() {
+  state.serialReconnect.manuallyClosed = true;
+  cancelSerialReconnect();
+  return sendCommand('serial:close');
 }
 
 function sendCommand(type, payload = {}) {
@@ -539,7 +590,10 @@ function startSplitterDrag(event) {
 }
 
 function updateSerialState(payload) {
+  const wasOpen = state.serialOpen;
   state.serialOpen = Boolean(payload.isOpen);
+  if (state.serialOpen) cancelSerialReconnect();
+  else if (wasOpen) scheduleSerialReconnect(payload.message || '串口已断开');
   state.metrics.rxBytes = finiteNumberOr(payload.rxBytes, state.metrics.rxBytes);
   state.metrics.txBytes = finiteNumberOr(payload.txBytes, state.metrics.txBytes);
   state.metrics.rxFrames = finiteNumberOr(payload.rxFrames, state.metrics.rxFrames);
@@ -628,6 +682,14 @@ function restoreSerialDraft() {
 
 function persistSerialDraft() {
   localStorage.setItem('serialscope.serial-draft', JSON.stringify(serialConfig()));
+}
+
+function restoreAutoReconnect() {
+  try {
+    $('#autoReconnectCheck').checked = Boolean(JSON.parse(localStorage.getItem('serialscope.auto-reconnect') || 'false'));
+  } catch {
+    $('#autoReconnectCheck').checked = false;
+  }
 }
 
 function updateFramingUi() {
@@ -1381,7 +1443,7 @@ function saveMacros(macros) {
 function renderMacroEditor() {
   const macros = loadMacros();
   const macro = macros[selectedMacroIndex];
-  const controls = ['#macroNameInput', '#macroModeSelect', '#macroDataInput', '#macroLineEndingSelect', '#macroCrcCheck', '#saveMacroButton', '#deleteMacroButton'];
+  const controls = ['#macroNameInput', '#macroModeSelect', '#macroDataInput', '#macroLineEndingSelect', '#macroChecksumSelect', '#appendMacroChecksumButton', '#macroCrcCheck', '#saveMacroButton', '#deleteMacroButton'];
   const enabled = Boolean(macro);
   controls.forEach((selector) => { $(selector).disabled = !enabled; });
   if (!macro) {
@@ -1395,12 +1457,13 @@ function renderMacroEditor() {
   $('#macroModeSelect').value = macro.mode || 'text';
   $('#macroDataInput').value = macro.data || '';
   $('#macroLineEndingSelect').value = macro.lineEnding || 'none';
+  $('#macroChecksumSelect').value = macro.checksumAlgorithm || 'crc16-modbus';
   $('#macroCrcCheck').checked = Boolean(macro.appendModbusCrc);
 }
 
 function newMacro() {
   const macros = loadMacros();
-  macros.push({ name: '新宏', mode: 'text', data: '', lineEnding: 'none', appendModbusCrc: false });
+  macros.push({ name: '新宏', mode: 'text', data: '', lineEnding: 'none', checksumAlgorithm: 'crc16-modbus', appendModbusCrc: false });
   selectedMacroIndex = macros.length - 1;
   saveMacros(macros);
   $('#macroNameInput').focus();
@@ -1424,10 +1487,60 @@ function saveMacroEditor() {
     mode: $('#macroModeSelect').value,
     data,
     lineEnding: $('#macroLineEndingSelect').value,
+    checksumAlgorithm: $('#macroChecksumSelect').value,
     appendModbusCrc: $('#macroCrcCheck').checked
   };
   saveMacros(macros);
   showToast(`宏“${name}”已保存`);
+}
+
+function macroHexBytes(value) {
+  const normalized = String(value || '').replace(/[\s,]+/g, '');
+  if (!normalized || normalized.length % 2 !== 0 || /[^0-9A-F]/i.test(normalized)) return null;
+  return normalized.match(/../g).map((pair) => Number.parseInt(pair, 16));
+}
+
+function crc8(bytes) {
+  let crc = 0;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc & 0x80) ? ((crc << 1) ^ 0x07) : (crc << 1);
+  }
+  return crc & 0xFF;
+}
+
+function crc16Ccitt(bytes, initial) {
+  let crc = initial;
+  for (const byte of bytes) {
+    crc ^= byte << 8;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) : (crc << 1);
+  }
+  return crc & 0xFFFF;
+}
+
+function crc32Ieee(bytes) {
+  let crc = 0xFFFFFFFF;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xEDB88320 : 0);
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
+}
+
+function appendMacroChecksum() {
+  if ($('#macroModeSelect').value !== 'hex') return showToast('CRC 计算仅支持 HEX 宏');
+  const bytes = macroHexBytes($('#macroDataInput').value);
+  const algorithm = $('#macroChecksumSelect').value;
+  if (!bytes) return showToast('HEX 报文无效，无法计算校验');
+  let suffix;
+  if (algorithm === 'crc8') suffix = [crc8(bytes)];
+  else if (algorithm === 'crc16-modbus') { const value = crc16Modbus(bytes); suffix = [value & 0xFF, value >>> 8]; }
+  else if (algorithm === 'crc16-ccitt-false') { const value = crc16Ccitt(bytes, 0xFFFF); suffix = [value >>> 8, value & 0xFF]; }
+  else if (algorithm === 'crc16-xmodem') { const value = crc16Ccitt(bytes, 0); suffix = [value >>> 8, value & 0xFF]; }
+  else { const value = crc32Ieee(bytes); suffix = [value & 0xFF, (value >>> 8) & 0xFF, (value >>> 16) & 0xFF, value >>> 24]; }
+  $('#macroDataInput').value = [...bytes, ...suffix].map((byte) => byte.toString(16).toUpperCase().padStart(2, '0')).join(' ');
+  $('#macroCrcCheck').checked = false;
+  showToast('校验码已追加到宏报文；保存后生效');
 }
 
 function deleteSelectedMacro() {
@@ -1980,12 +2093,13 @@ function bindEvents() {
   $('#refreshConfigPortsButton').addEventListener('click', () => sendCommand('ports:list'));
   $('#openButton').addEventListener('click', () => {
     persistSerialDraft();
-    sendCommand('serial:open', serialConfig());
+    requestSerialOpen();
   });
-  $('#closeButton').addEventListener('click', () => sendCommand('serial:close'));
+  $('#closeButton').addEventListener('click', requestSerialClose);
   $('#sendButton').addEventListener('click', sendCurrentInput);
   $('#newMacroButton').addEventListener('click', newMacro);
   $('#saveMacroButton').addEventListener('click', saveMacroEditor);
+  $('#appendMacroChecksumButton').addEventListener('click', appendMacroChecksum);
   $('#deleteMacroButton').addEventListener('click', deleteSelectedMacro);
   $('#addSimulatorRuleButton').addEventListener('click', addSimulatorRule);
   $('#saveSimulatorButton').addEventListener('click', saveSimulatorEditor);
@@ -2012,6 +2126,10 @@ function bindEvents() {
   $('#frameDelimiterSelect').addEventListener('change', updateFramingUi);
   ['#portSelect', '#baudRateSelect', '#dataBitsSelect', '#paritySelect', '#stopBitsSelect', '#flowControlSelect', '#frameModeSelect', '#frameDelimiterSelect', '#frameDelimiterHexInput', '#frameSizeInput']
     .forEach((selector) => $(selector).addEventListener('change', persistSerialDraft));
+  $('#autoReconnectCheck').addEventListener('change', () => {
+    localStorage.setItem('serialscope.auto-reconnect', JSON.stringify(autoReconnectEnabled()));
+    if (!autoReconnectEnabled()) { state.serialReconnect.manuallyClosed = true; cancelSerialReconnect(); }
+  });
   $('#autoSendCheck').addEventListener('change', updateAutoSend);
   $('#autoSendInterval').addEventListener('change', updateAutoSend);
   $('#autoSendTimeout').addEventListener('change', updateAutoSend);
@@ -2055,7 +2173,7 @@ function handleUiAction(detail) {
   if (action === 'start-backend') return startBackendFromUi();
   if (action === 'refresh-ports') return sendCommand('ports:list');
   if (action === 'open-serial') return openSerialConfiguration();
-  if (action === 'close-serial') return sendCommand('serial:close');
+  if (action === 'close-serial') return requestSerialClose();
   if (action === 'send-current') return sendCurrentInput();
   if (action === 'save-profile') return saveProfile();
   if (action === 'load-profile') return loadProfileFile();
@@ -2359,6 +2477,8 @@ async function openAiConfig() {
   try {
     const snapshot = await window.serialScope.getAiConfig();
     $('#aiApiKeyInput').value = '';
+    // 已持久化保存过 Key 时回显"保存到本地"为勾选状态。
+    $('#aiSaveKeyCheck').checked = Boolean(snapshot.saveApiKeyToDisk) || Boolean(snapshot.hasPersistedApiKey);
     $('#aiIncludeSerialCheck').checked = Boolean(state.ai.includeSerialData);
     $('#aiTestResult').textContent = '';
     $('#aiTestResult').className = 'ai-test-result';
@@ -2391,6 +2511,7 @@ async function testAiConnection() {
 async function saveAiConfig() {
   const apiKey = $('#aiApiKeyInput').value.trim();
   const includeSerial = $('#aiIncludeSerialCheck').checked;
+  const saveKeyToDisk = $('#aiSaveKeyCheck').checked;
   if (!apiKey) {
     showToast('请填写 DeepSeek API Key');
     return;
@@ -2402,9 +2523,11 @@ async function saveAiConfig() {
       provider: 'deepseek',
       enabled: true,
       allowDataUpload: true,
-      apiKey
+      apiKey,
+      saveApiKeyToDisk: saveKeyToDisk
     });
-    showToast(`DeepSeek 已配置并启用（Key 来源 ${result.keySource}）`);
+    const keyHint = saveKeyToDisk ? '已保存到本地，下次启动自动读取' : '仅本次会话有效（未保存到本地）';
+    showToast(`DeepSeek 已配置并启用（${keyHint}）`);
     closeAiConfig();
     await refreshAiStatus();
   } catch (error) {
@@ -2436,7 +2559,7 @@ function initAiPanel() {
 async function openSerialConfiguration() {
   if (standaloneModule === 'serial-config') {
     persistSerialDraft();
-    sendCommand('serial:open', serialConfig());
+    requestSerialOpen();
     return;
   }
   try {

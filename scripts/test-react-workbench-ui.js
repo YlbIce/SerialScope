@@ -70,6 +70,28 @@ app.whenReady().then(async () => {
     });
     await window.loadURL('serialscope://workbench/index.html');
     await waitFor("document.querySelector('.react-flow') && document.querySelector('h2')?.textContent === '通信测试工作台'", 'React Flow 工作台加载');
+    await window.webContents.executeJavaScript(`(() => {
+      localStorage.setItem('serialscope.macros', JSON.stringify([{ name: '主界面既有读取宏', mode: 'hex', data: '01 03 00 00 00 01', lineEnding: 'none' }]));
+      location.reload();
+    })()`, true);
+    await waitFor("document.querySelector('.react-flow') && document.querySelector('.palette')?.textContent.includes('主界面既有读取宏')", '主界面宏库载入工作台');
+    await window.webContents.executeJavaScript(`(() => {
+      document.querySelector('.react-flow__node[data-id="query"]').click();
+      const select = document.querySelector('.inspector select');
+      const option = Array.from(select.options).find((item) => item.textContent.includes('主界面既有读取宏'));
+      select.value = option.value; select.dispatchEvent(new Event('change', { bubbles: true }));
+    })()`, true);
+    await waitFor("(() => { const data = JSON.parse(localStorage.getItem('serialscope.device-workbench.flow.v2')).nodes.find((node) => node.id === 'query')?.data; return data?.macroId?.startsWith('legacy-') && data?.macroName === '主界面既有读取宏'; })()", '工作台宏节点引用主界面宏');
+    await window.webContents.executeJavaScript(`(() => {
+      const select = document.querySelector('.inspector select'); select.value = 'builtin-read-registers'; select.dispatchEvent(new Event('change', { bubbles: true }));
+      const input = Array.from(document.querySelectorAll('.palette input'))[1];
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+      setter.call(input, '01 03 00 00 00 01'); input.dispatchEvent(new Event('input', { bubbles: true }));
+      const selects = Array.from(document.querySelectorAll('.palette select'));
+      selects.find((item) => item.options[0]?.textContent === 'CRC-8').value = 'crc16-modbus';
+      Array.from(document.querySelectorAll('.palette button')).find((button) => button.textContent === '计算并追加校验').click();
+    })()`, true);
+    await waitFor("Array.from(document.querySelectorAll('.palette input'))[1]?.value === '01 03 00 00 00 01 84 0A'", '工作台宏 CRC 计算');
     await window.webContents.executeJavaScript("document.querySelector('.react-flow__node[data-id=\"condition\"]').click()", true);
     await waitFor("document.querySelector('.inspector')?.textContent.includes('condition · condition')", '条件节点检查器打开');
     await window.webContents.executeJavaScript(`(() => {

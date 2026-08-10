@@ -18,7 +18,7 @@ class SerialSession final : public std::enable_shared_from_this<SerialSession>, 
 public:
   using EventHandler = std::function<void(protocol::Json)>;
 
-  explicit SerialSession(boost::asio::io_context& io);
+  explicit SerialSession(boost::asio::io_context& io, std::shared_ptr<class BackendDiagnostics> diagnostics = nullptr);
 
   void setEventHandler(EventHandler handler);
   protocol::Json stateJson() const;
@@ -44,6 +44,7 @@ private:
   mutable itas109::CSerialPort port_;
   mutable std::mutex portMutex_;
   EventHandler eventHandler_;
+  std::shared_ptr<class BackendDiagnostics> diagnostics_;
   FrameDecoder frameDecoder_;
   std::array<std::uint8_t, 4096> readBuffer_ {};
   std::string portName_;

@@ -16,6 +16,39 @@
 
 ## 条目
 
+## 2026-08-10 · L1 · fix-window-close-destroyed-error（verify-complete，未归档）
+
+- 需求来源：用户关闭应用窗口时主进程弹窗报 `TypeError: Object has been destroyed`（main.js:287）。
+- 根因：窗口 `closed` 事件回调里 `workbenchExecution.end(target.webContents.id)`——Electron 中 `closed` 触发时 webContents 已销毁，访问 `.id` 抛异常，且是同步事件回调未捕获，导致 UncaughtException。
+- 修复：`main.js` 的 `closed` 回调改用窗口创建时缓存的 `webContentsId`（原第 254 行已缓存），不再访问已销毁的 webContents；并对 `workbenchExecution.end()` 加 try/catch 兜底（诊断日志 `workbench-end-failed`）。
+- 验证：`node scripts/verify-window-close.js` passed（修复后用缓存 id 调用 end 不抛错，并演示旧访问方式会抛 Object has been destroyed）；`npm run check`、`npm run process:check`（28 个活动 change）passed。
+- 风险与后续：未在完整应用中逐个关闭所有窗口做端到端验证（可后续用 test:electron-ui 补）；修复经代码审查 + 定向单测确认。L1 变更，保持 verify-complete。
+- 关联：`changes/fix-window-close-destroyed-error/`。
+
+## 2026-08-09 · L2 · add-modbus-checksum-and-excel（ready-for-review，未归档）
+
+- 需求来源：用户反馈 ①命令生成时没有给出计算后的校验码（Modbus 规约通常用 CRC16-Modbus）；②Modbus 点表 Excel（`.xlsx`）文档不支持导入。
+- 实现：
+  - `deepseek-provider.js`：修改 `COMMAND_SYSTEM_PROMPT`，指示模型对 Modbus 命令返回"主体字节（地址+功能码+数据）+ checksum 类型（modbus-crc16/none）"，校验码由本地计算；新增 `crc16Modbus`（与 renderer.js / ChecksumEngine 一致，多项式 0xA001）与 `ensureCommandChecksum`——对 `checksum=modbus-crc16` 或启发式（前两字节=从站+标准功能码 01/02/03/04/05/06/0F/10）的命令，在 code 末尾追加 CRC（低字节在前），其余命令不追加；`generateCommandsWithDeepSeek` 返回前调用。导出供测试。
+  - `package.json`/`package-lock.json`：新增 `xlsx ^0.18.5`（SheetJS，纯 JS 无原生依赖）。
+  - `protocol-import.js`：新增 `extractExcelText`，用 `xlsx.readFile` + `sheet_to_json` 把每个 sheet 转为制表符表格文本（`===== Sheet: <名> =====` 分隔，跳过空行），纳入 `extractProtocolText` 支持 `.xlsx`/`.xls`。
+  - `main.js`：`file:importProtocol` 过滤器增加"Excel 点表"（xlsx/xls）并加入"规约文档"通用 filter。
+- 验证：`node scripts/verify-modbus-checksum-excel.js` passed（CRC16-Modbus 标准向量 0xCDC5/0xE1D9；modbus-crc16 追加 CRC 低字节在前；none 不追加；无标记非 Modbus 不追加；启发式兜底；不修改入参；**解析用户实际点表 xlsx 成功，72466 字符含 4 sheet 表头**）；`npm run test:ai-rpc`、`npm run test:protocol-import` passed（无回归）；`npm run check`、`npm run process:check`（24 个活动 change）passed。
+- 风险与后续：命令主体字节由模型生成，本地仅算校验码；启发式兜底对标准功能码限定，误判概率低；真实 Modbus 设备端到端未验证（需授权+连接）。L2 保持 ready-for-review，独立只读审核，不自动归档。
+- 关联：`changes/add-modbus-checksum-and-excel/`。
+
+## 2026-08-09 · L2 · add-ai-debug-log-and-key-save（ready-for-review，未归档）
+
+- 需求来源：用户遇到 `DeepSeek 返回 JSON 解析失败: Expected ',' or ']' after array element in JSON at position 50`，要求打印 DeepSeek 原始回复文本流便于调试；并要求新增配置项提示用户是否将 API Key 保存到本地（选是则落盘，下次启动自动读取）。
+- 实现：
+  - `deepseek-provider.js`：`callChatCompletions` 拿到原始回复用 `console.debug` 打印（`DEBUG_DEEPSEEK!=0` 时）；`extractJson` 解析失败时 `console.error` 打印原文，并把原始文本（>1000 字符截断）纳入错误信息；改为累积 Buffer 最后一次性 UTF-8 解码避免分块切断多字节字符。
+  - `ai-config.js`：新增持久化字段 `saveApiKeyToDisk`（默认 false）与 `savedApiKey`；`configure` 在勾选保存时落盘 Key、显式关闭时移除；`getApiKey` 优先级 运行时→持久化→环境变量；`getSnapshot` 新增 `saveApiKeyToDisk`/`hasPersistedApiKey`；`keySource` 新增 `saved`。
+  - `index.html`/`renderer.js`：AI 配置窗口新增"将 API Key 保存到本地"复选框；`openAiConfig` 按 `saveApiKeyToDisk`/`hasPersistedApiKey` 回显；`saveAiConfig` 读取并传入 `saveApiKeyToDisk`。
+- **根因修复**：用户实测 `Expected ',' or ']' after array element in JSON at position 50` 的真正原因是 DeepSeek 命令生成返回 `code:[0x05,0x1F,0x10,0x80]` 十六进制字面量，JSON 标准不支持 `0x` 前缀，`JSON.parse('[0x05]')` 即复现同款错误。`extractJson` 新增 `normalizeHexNumbers`：首轮解析失败后把字符串外的 `0x[0-9a-fA-F]+` 归一化为十进制重试（`0x05→5`、`0x80→128`），字符串字段内 `0x` 文字不被误改。调用端成功解析。
+- 验证：`node scripts/verify-ai-debug-key-save.js` passed（extractJson 畸形 JSON 错误含原文/合法 JSON 结构不变/**code 0x 数组归一化/字符串内 0x 不被误改**；AiConfig 默认不保存/勾选保存→持久化→重启读回/不勾选→不落盘/显式关闭→移除已存 Key/兼容旧配置）；`npm run test:ai-rpc` passed（无回归）；`npm run check`、`npm run process:check`（23 个活动 change）passed。
+- 风险与后续：真实 DeepSeek 端到端透传未验证；明文 Key 落盘为用户显式勾选授权；配置窗口 UI 交互仅代码审查。L2 保持 ready-for-review，独立只读审核，不自动归档。
+- 关联：`changes/add-ai-debug-log-and-key-save/`。
+
 ## 2026-08-09 · 修复 · extractJson 支持数组（命令生成 JSON 解析失败）
 
 - 问题：真实 DeepSeek 命令生成报 `SyntaxError: Expected ',' or ']' after array element`。
@@ -364,6 +397,27 @@
 - 验证：`test:flow-runtime`、`test:react-workbench-ui`、`test:workbench-dual-simulator`、`build:backend`、`test:device-workbench`、授权/端口、`check` 和 `process:check` 通过；独立只读审核为 conditionally-approved（P1=0/P2=2）。
 - 残余：真实硬件未授权；工作台/子模拟器 `sandbox=false`；生产 Main 菜单/IPC/授权器完整 CDP 路径及 raw 相邻帧不可合并性未覆盖。保持活动，禁止自动归档。
 
+## 2026-08-09T13:38:57Z · implementing · harden-protocol-observability-and-recovery
+
+- 变更：新增以 Main `runId` 关联的有界 JSONL 诊断链路。Main 记录后端子进程、Named Pipe、RPC、渲染器退出/卡死；Renderer 上报未捕获错误；C++ 后端通过 `--diagnostics-dir/--diagnostics-run-id` 记录请求、串口状态、收发长度/序号和跨会话拒绝。默认不记录 RX/TX payload，Node 侧会脱敏 API Key、Token、密码和 Secret。
+- 自动重连：串口配置页新增默认关闭的“打开失败时自动重连”；仅用户启用并提交打开后按 600 ms 指数退避、8 秒上限、最多 8 次重试。手动关闭或禁用立即取消，避免无意持续占用设备。
+- 测试：新增协议生命周期脚本（open/send/rx/tx/close/reopen/错误）和 921600 bps、1000 个短帧洪峰脚本；新增 burst writer 原生辅助程序。`test:diagnostics`、`test:backend-diagnostics`、`test:serial-reconnect`、后端构建、FrameDecoder/ChecksumEngine/AiAdapter、Renderer build、`check` 与 `process:check` 均 passed。
+- 残余：生命周期实跑在 COM11 被外部进程占用时受阻（writer `open failed: 5`），因此 load 未执行；端口空闲后必须重跑两项定向验证并独立审核。跨 Windows 会话、真实设备、签名/自动更新和正式法务仍是外部 L3 闸门，未声称完成。
+
+## 2026-08-09T14:10:02Z · ready-for-review · harden-protocol-observability-and-recovery
+
+- COM11 释放后，`test:named-pipe-protocol-lifecycle`、`test:named-pipe-fixed-frame`、`test:named-pipe-load` 与 `test:electron-ui` 均通过。负载脚本以 921600 bps 验证 1,000 个 LF 分隔短帧的解码、通知与统计一致，固定帧覆盖 128 KiB。
+- 排查中发现原洪峰辅助写入器把 `0x0A` 写入帧载荷，导致分隔符模式按设计拆分 4 个帧；现已改为不含 LF 的测试载荷，未将该测试数据错误归因于产品丢帧。Electron 回归测试桩已同步当前 IPC 与按钮 ID，覆盖宏 CRC 计算、保存和虚拟串口执行。
+- 验证：`npm run build:backend`、上述四项定向测试、`npm run check`、`npm run process:check` passed。L2 已进入独立只读审核前状态，不得归档；跨会话、真实设备、签名/更新和法务仍为 L3 外部闸门。
+
+## 2026-08-09T13:50:14Z · implementing · prepare-release-and-external-validation
+
+- 变更：建立 `docs/release-and-external-validation-gates.md` 和 L3 变更包，明确 Windows NSIS/签名/更新、真实同 SID/异 SID Windows 会话拒绝、CSerialPort LGPL 正式审查、真实 Modbus Slave/PLC 回归的输入、人工确认及证据格式；README 已链接该清单。
+- 验证：`npm run test:release-compliance-gates`、`npm run check`、`npm run process:check` passed。
+- 残余：两次 `npm install electron-builder/electron-updater` 都在注册表请求阶段超时，虽然本机模块目录出现暂存包，未形成可复现的 manifest/lockfile，不能声称打包能力已可用。证书、更新源、第二 Windows 会话、法务结论和真实设备授权均未提供；L3 保持 implementing，禁止发布、归档或外部写入。
+
+- 后续补充：新增 `THIRD_PARTY_NOTICES.md`，将 CSerialPort 的许可证路径和发布前依赖清单责任纳入可分发通知；跨会话清单现提供 `test-cross-session-pipe-client`，供第二真实 Windows 会话在 `backend.ready` 前验证拒绝。`test:release-compliance-gates`、`check`、`process:check` 均 passed；该脚本不替代真实双会话运行。
+
 ## 2026-08-04T01:30:00+08:00 · implementing · validate-visible-ui-and-hardware
 
 - 用户授权在 COM11 的 Modbus Slave 模拟下位机执行条件读写。SerialScope 后端从配对端 COM10 以 115200 8N1、无校验/无流控发送 03 查询寄存器 0；收到并 CRC 校验值 100 后，发送 06 将寄存器 1 写为 101，收到写入回显确认。
@@ -373,6 +427,20 @@
 - 后续安全收紧：脚本固定本次端口/参数、加双确认、有界 RPC、内层 finally 清理与 TX/RX 序号围栏；`node scripts/test-authorized-modbus-register-flow.js` 已验证旧帧和 CRC 错误帧不会被误关联。为避免第三次重复写 101，最终安全收紧版本未再次向模拟 Slave 发 06；L3 证据如实记录该范围。
 
 - 审核：独立只读复核 conditionally-approved（P1=0/P2=2）。P2 为最终安全收紧版未再次执行外部 06、以及未刻意演练外部 Slave 的异常应答；COM11 模拟 Slave 不构成物理设备验收。L3 保持 implementing，禁止归档。
+
+## 2026-08-09T11:37:33Z · implementing · integrate-workbench-macros-and-checksums
+
+- 变更：通信测试工作台将主界面 `serialscope.macros` 合并进宏节点选择器，以 `legacy-` 稳定 ID 保持引用，并在实际执行时拍摄完整宏快照；工作台和主界面宏编辑器均提供 CRC-8、CRC16-Modbus、CRC16-CCITT-FALSE、CRC16-XMODEM、CRC32/IEEE 的 HEX 计算与追加，界面明确各算法字节序。手动追加会关闭旧的发送时 Modbus CRC16 追加，避免重复校验。
+- 验证：`npm run test:workbench-checksums`、`npm run test:react-workbench-ui`、`npm run test:flow-runtime`、`npm run check`、`npm run process:check` 均 passed；`git diff --check` 无空白错误。
+- 残余风险：`npm run test:electron-ui` 被环境中 COM11 占用阻断（辅助读取器 `open failed: 5`，在本变更断言前失败），因此主界面宏编辑器的虚拟串口端到端发送仍待解除占用后重跑；真实设备未授权。L2 保持 implementing，尚未独立审核，不得归档。
+
+## 2026-08-09T14:10:02Z · ready-for-review · integrate-workbench-macros-and-checksums
+
+- COM11 释放后，`npm run test:electron-ui` passed：主界面宏编辑器的 CRC16-Modbus 计算/追加、保存与通过 COM10/COM11 的宏执行均已验证。该 L2 变更现在等待独立只读审核，禁止自动归档；真实物理设备验证仍未授权。
+
+## 2026-08-09T14:10:02Z · L0 · blog-serialscope-for-wechat
+
+- 文档已删除协议生命周期、持久化诊断、自动重连与虚拟串口高吞吐/长帧仍是缺陷或待验证的过时声明；保留签名发布、真实跨 Windows 会话、正式 LGPL 审查与真实物理设备等外部边界。
 
 ## 2026-08-04T02:20:00+08:00 · review-passed · add-device-test-workbench
 

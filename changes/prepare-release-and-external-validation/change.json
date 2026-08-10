@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "prepare-release-and-external-validation",
+  "title": "Prepare release and external validation gates",
+  "riskTier": "L3",
+  "state": "implementing",
+  "owner": "implementer",
+  "reviewMode": "L",
+  "archiveRequiresHumanConfirmation": true
+}

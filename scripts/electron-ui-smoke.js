@@ -72,7 +72,11 @@ function runHelper(executable, args) {
 }
 
 async function rendererValue(expression) {
-  return window.webContents.executeJavaScript(expression, true);
+  try {
+    return await window.webContents.executeJavaScript(expression, true);
+  } catch (error) {
+    throw new Error(`Renderer expression failed: ${expression}\n${error.message || error}`);
+  }
 }
 
 async function waitForRenderer(expression, description, timeoutMs = 8000) {
@@ -116,7 +120,7 @@ async function exerciseUi() {
     document.querySelector('#sendModeSelect').dispatchEvent(new Event('change'));
     document.querySelector('#sendInput').value = 'CA FE';
     document.querySelector('#lineEndingSelect').value = 'none';
-    document.querySelector('#toolbarSendButton').click();
+    document.querySelector('#sendButton').click();
   })()`);
   if (await reader !== 'CA FE') throw new Error('UI serial.send did not reach COM11');
 
@@ -132,6 +136,16 @@ async function exerciseUi() {
     document.querySelector('#saveMacroButton').click();
   })()`);
   await waitForRenderer("JSON.parse(localStorage.getItem('serialscope.macros')).some((macro) => macro.name === 'UI 验证宏' && macro.data === 'CA FE')", 'macro persistence');
+  await rendererValue(`(() => {
+    document.querySelector('#macroDataInput').value = '01 03 00 00 00 01';
+    document.querySelector('#macroChecksumSelect').value = 'crc16-modbus';
+    document.querySelector('#appendMacroChecksumButton').click();
+  })()`);
+  await waitForRenderer("document.querySelector('#macroDataInput').value === '01 03 00 00 00 01 84 0A' && !document.querySelector('#macroCrcCheck').checked", 'macro CRC calculation and append');
+  await rendererValue(`(() => {
+    document.querySelector('#macroDataInput').value = 'CA FE';
+    document.querySelector('#saveMacroButton').click();
+  })()`);
   const macroReader = runHelper(readerPath, ['COM11']);
   await delay(150);
   await rendererValue("Array.from(document.querySelectorAll('.macro-button')).find((button) => button.innerText.includes('UI 验证宏')).click()");
@@ -144,7 +158,7 @@ async function exerciseUi() {
     "document.querySelector('#page-macros').classList.contains('active') && document.querySelector('#backendState').textContent.includes('已连接')",
     'module window loaded macro page and backend state');
 
-  await rendererValue("document.querySelector('#toolbarCloseButton').click()");
+  await rendererValue("document.querySelector('#closeButton').click()");
   await waitForRenderer("document.querySelector('#serialState').textContent.includes('未打开')", 'serial closed before simulator test');
   await rendererValue(`(() => {
     document.querySelector('#portSelect').value = 'COM11';
@@ -194,7 +208,7 @@ async function exerciseUi() {
   const screenshot = await window.webContents.capturePage();
   fs.writeFileSync(path.join(artifacts, 'electron-ui-interaction.png'), screenshot.toPNG());
 
-  await rendererValue("document.querySelector('#toolbarCloseButton').click()");
+  await rendererValue("document.querySelector('#closeButton').click()");
   await waitForRenderer("document.querySelector('#serialState').textContent.includes('未打开')", 'serial closed');
 }
 
@@ -204,10 +218,13 @@ app.whenReady().then(async () => {
     ipcMain.handle('backend:info', () => ({ transport: 'named-pipe', backendPath }));
     ipcMain.handle('backend:start', () => startBackend());
     ipcMain.handle('backend:rpc', (_event, method, params = {}) => {
-      if (!['ports.list', 'serial.status', 'serial.open', 'serial.close', 'serial.send'].includes(method)) throw new Error('不允许的后端 RPC 方法');
+      if (!['ports.list', 'serial.status', 'serial.open', 'serial.close', 'serial.send', 'ai.status'].includes(method)) throw new Error('不允许的后端 RPC 方法');
+      if (!rpc && method === 'ai.status') return { enabled: false, allowDataUpload: false, provider: 'mock' };
       if (!rpc) throw new Error('Named Pipe 后端未连接');
       return rpc.call(method, params);
     });
+    ipcMain.handle('ai:config', () => null);
+    ipcMain.handle('diagnostics:renderer', () => ({ ok: true }));
     ipcMain.handle('window:openModule', async (_event, moduleId) => {
       const moduleWindow = new BrowserWindow({
         width: 1000,

@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "integrate-workbench-macros-and-checksums",
+  "title": "Reuse main macros and calculate common checksums",
+  "riskTier": "L2",
+  "state": "ready-for-review",
+  "owner": "implementer",
+  "reviewMode": "S",
+  "archiveRequiresHumanConfirmation": true
+}
